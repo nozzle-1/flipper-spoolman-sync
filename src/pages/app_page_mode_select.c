@@ -1,0 +1,68 @@
+#include "app_page.h"
+
+#include <stdio.h>
+
+static void app_page_mode_select_draw_url(Canvas* canvas, const SpoolmanSyncApp* app) {
+    char url_line[23];
+    snprintf(url_line, sizeof(url_line), "%.22s", furi_string_get_cstr(app->spoolman_base_url));
+    canvas_draw_str(canvas, 10, 25, url_line);
+}
+
+void app_page_mode_select_draw(Canvas* canvas, const SpoolmanSyncApp* app) {
+    canvas_draw_str(canvas, 10, 15, "Spoolman Sync");
+
+    canvas_set_font(canvas, FontSecondary);
+    if(!furi_string_empty(app->info_message)) {
+        canvas_draw_str(canvas, 10, 25, furi_string_get_cstr(app->info_message));
+    } else if(app->status == AppStatusTestingBaseUrl) {
+        canvas_draw_str(canvas, 10, 25, "Testing Spoolman...");
+    } else {
+        app_page_mode_select_draw_url(canvas, app);
+    }
+    canvas_draw_str(
+        canvas,
+        10,
+        38,
+        app->selected_mode == AppModeUpdate ? "> 1. Update mode" : "  1. Update mode");
+    canvas_draw_str(
+        canvas,
+        10,
+        50,
+        app->selected_mode == AppModeCreate ? "> 2. Create mode (Coming soon)" :
+                                              "  2. Create mode");
+    canvas_draw_str(
+        canvas,
+        10,
+        62,
+        app->selected_mode == AppModeConfig ? "> 3. Server URL" : "  3. Server URL");
+}
+
+bool app_page_mode_select_handle_input(SpoolmanSyncApp* app, const InputEvent* event) {
+    if(event->key == InputKeyUp || event->key == InputKeyDown) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        if(event->key == InputKeyDown) {
+            app->selected_mode = (app->selected_mode + 1) % 3;
+        } else {
+            app->selected_mode = app->selected_mode == AppModeUpdate ? AppModeConfig :
+                                                                      app->selected_mode - 1;
+        }
+        furi_mutex_release(app->mutex);
+        view_port_update(app->view_port);
+        return true;
+    }
+
+    if(event->key == InputKeyOk) {
+        if(app->selected_mode == AppModeUpdate) {
+            app_start_update_mode(app);
+        }
+        if(app->selected_mode == AppModeCreate) {
+            //TODO: Implement create mode
+        }
+        if(app->selected_mode == AppModeConfig) {
+            app_open_base_url_editor(app);
+        }
+        return true;
+    }
+
+    return false;
+}
