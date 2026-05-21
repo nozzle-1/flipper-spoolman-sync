@@ -20,10 +20,19 @@ void app_pages_draw(Canvas* canvas, SpoolmanSyncApp* app) {
     case AppStatusUpdateError:
         app_page_update_draw(canvas, app);
         break;
-    case AppStatusScanning:
-    case AppStatusReading:
-    case AppStatusSuccess:
-    case AppStatusError:
+    case AppStatusScanReady:
+    case AppStatusScanReading:
+    case AppStatusScanSuccess:
+    case AppStatusScanError:
+        app_page_scan_draw(canvas, app);
+        break;
+    case AppStatusCreateReady:
+    case AppStatusCreateReading:
+    case AppStatusCreateSearching:
+    case AppStatusCreateConfirm:
+    case AppStatusCreateSaving:
+    case AppStatusCreateSuccess:
+    case AppStatusCreateError:
         app_page_create_draw(canvas, app);
         break;
     }
@@ -66,8 +75,16 @@ bool app_pages_handle_input(SpoolmanSyncApp* app, const InputEvent* event) {
         return false;
     }
 
-    if(app->status == AppStatusScanning || app->status == AppStatusReading ||
-       app->status == AppStatusSuccess || app->status == AppStatusError) {
+    if(app->status == AppStatusScanReady || app->status == AppStatusScanReading ||
+       app->status == AppStatusScanSuccess || app->status == AppStatusScanError) {
+        app_page_scan_handle_input(app, event);
+        return false;
+    }
+
+    if(app->status == AppStatusCreateReady || app->status == AppStatusCreateReading ||
+       app->status == AppStatusCreateSearching || app->status == AppStatusCreateConfirm ||
+       app->status == AppStatusCreateSaving || app->status == AppStatusCreateSuccess ||
+       app->status == AppStatusCreateError) {
         app_page_create_handle_input(app, event);
         return false;
     }

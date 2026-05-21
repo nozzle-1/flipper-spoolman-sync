@@ -21,14 +21,22 @@ typedef enum {
     AppStatusLoadingUpdate,
     AppStatusUpdateMode,
     AppStatusUpdateError,
-    AppStatusScanning,
-    AppStatusReading,
-    AppStatusSuccess,
-    AppStatusError,
+    AppStatusScanReady,
+    AppStatusScanReading,
+    AppStatusScanSuccess,
+    AppStatusScanError,
+    AppStatusCreateReady,
+    AppStatusCreateReading,
+    AppStatusCreateSearching,
+    AppStatusCreateConfirm,
+    AppStatusCreateSaving,
+    AppStatusCreateSuccess,
+    AppStatusCreateError,
 } AppStatus;
 
 typedef enum {
     AppModeUpdate,
+    AppModeScan,
     AppModeCreate,
     AppModeConfig,
 } AppMode;
@@ -37,6 +45,7 @@ typedef enum {
     AppEventTypeInput,
     AppEventTypeBaseUrlSave,
     AppEventTypeBaseUrlBack,
+    AppEventTypeCreateProcess,
 } AppEventType;
 
 typedef struct {
@@ -64,7 +73,11 @@ typedef struct {
     FuriString* info_message;
     FuriString* spoolman_error;
     FuriString* create_error;
+    FuriString* create_filament_name;
+    FuriString* create_filament_material;
     int spoolman_status_code;
+    int create_filament_id;
+    int create_spool_id;
     size_t spools_to_update_count;
     size_t total_spools_count;
     SpoolmanSpoolList spools;
@@ -87,9 +100,15 @@ void app_check_spoolman_health(SpoolmanSyncApp* app);
 
 void app_start_update_mode(SpoolmanSyncApp* app);
 
+void app_start_scan_mode(SpoolmanSyncApp* app);
+
+void app_start_scan_read(SpoolmanSyncApp* app);
+
 void app_start_create_mode(SpoolmanSyncApp* app);
 
 void app_start_create_scan(SpoolmanSyncApp* app);
+
+void app_confirm_create_spool(SpoolmanSyncApp* app);
 
 void app_start_update_scan(SpoolmanSyncApp* app);
 

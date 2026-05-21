@@ -9,6 +9,7 @@
 #define TAG "SpoolmanApi"
 
 #define SPOOLMAN_API_PATH_HEALTH "/api/v1/health"
+#define SPOOLMAN_API_PATH_FILAMENT "/api/v1/filament"
 #define SPOOLMAN_API_PATH_SPOOLS "/api/v1/spool"
 #define SPOOLMAN_API_HEADERS \
     "{\"Content-Type\":\"application/json\",\"Accept\":\"application/json\"}"
@@ -20,6 +21,10 @@ struct SpoolmanApi {
     FuriString* last_error;
     int status_code;
 };
+
+static const char* spoolman_api_get_spools_path(bool allow_archived) {
+    return allow_archived ? SPOOLMAN_API_PATH_SPOOLS "?allow_archived=true" : SPOOLMAN_API_PATH_SPOOLS;
+}
 
 typedef struct {
     FuriString* response;
@@ -38,13 +43,17 @@ static void spoolman_vendor_clear(SpoolmanVendor* vendor) {
     memset(vendor, 0, sizeof(SpoolmanVendor));
 }
 
-static void spoolman_filament_init(SpoolmanFilament* filament) {
+void spoolman_filament_init(SpoolmanFilament* filament) {
     memset(filament, 0, sizeof(SpoolmanFilament));
     filament->name = furi_string_alloc();
+    filament->vendor.name = furi_string_alloc();
+    filament->vendor.external_id = furi_string_alloc();
     filament->material = furi_string_alloc();
+    filament->color_hex = furi_string_alloc();
+    filament->external_id = furi_string_alloc();
 }
 
-static void spoolman_filament_clear(SpoolmanFilament* filament) {
+void spoolman_filament_clear(SpoolmanFilament* filament) {
     if(filament->name) {
         furi_string_free(filament->name);
     }
@@ -61,10 +70,34 @@ static void spoolman_filament_clear(SpoolmanFilament* filament) {
     memset(filament, 0, sizeof(SpoolmanFilament));
 }
 
+void spoolman_filament_copy_into(SpoolmanFilament* destination, const SpoolmanFilament* source) {
+    furi_assert(destination);
+    furi_assert(source);
+
+    destination->id = source->id;
+    furi_string_set(destination->name, source->name);
+    destination->vendor.id = source->vendor.id;
+    furi_string_set(destination->vendor.name, source->vendor.name);
+    furi_string_set(destination->vendor.external_id, source->vendor.external_id);
+    furi_string_set(destination->material, source->material);
+    destination->density = source->density;
+    destination->diameter = source->diameter;
+    destination->weight = source->weight;
+    destination->spool_weight = source->spool_weight;
+    destination->settings_extruder_temp = source->settings_extruder_temp;
+    destination->settings_bed_temp = source->settings_bed_temp;
+    furi_string_set(destination->color_hex, source->color_hex);
+    furi_string_set(destination->external_id, source->external_id);
+}
+
 static void spoolman_spool_init(SpoolmanSpool* spool) {
     memset(spool, 0, sizeof(SpoolmanSpool));
+    spool->registered = furi_string_alloc();
+    spool->first_used = furi_string_alloc();
+    spool->last_used = furi_string_alloc();
     spoolman_filament_init(&spool->filament);
     spool->tag = furi_string_alloc();
+    spool->active_tray = furi_string_alloc();
 }
 
 static void spoolman_spool_clear(SpoolmanSpool* spool) {
@@ -131,12 +164,18 @@ static void spoolman_api_collect_response_line(const char* line, void* context) 
     }
 
     const char* get_success = strstr(line, "[GET/SUCCESS]");
+    const char* post_success = strstr(line, "[POST/SUCCESS]");
     const char* get_end = strstr(line, "[GET/END]");
+    const char* post_end = strstr(line, "[POST/END]");
 
-    if(get_success != NULL) {
+    const char* success = get_success ? get_success : post_success;
+    const char* end = get_end ? get_end : post_end;
+
+    if(success != NULL) {
         collector->in_body = true;
 
-        const char* suffix = get_success + strlen("[GET/SUCCESS]");
+        const char* suffix =
+            success + (get_success ? strlen("[GET/SUCCESS]") : strlen("[POST/SUCCESS]"));
         if(*suffix != '\0' && collector->response) {
             if(strncmp(suffix, "{\"Status-Code\":", strlen("{\"Status-Code\":")) == 0) {
                 const char* header_end = strchr(suffix, '}');
@@ -147,10 +186,10 @@ static void spoolman_api_collect_response_line(const char* line, void* context) 
                 furi_string_cat_str(collector->response, suffix);
             }
         }
-    } else if(get_end != NULL) {
-        if(collector->in_body && collector->response && get_end > line) {
+    } else if(end != NULL) {
+        if(collector->in_body && collector->response && end > line) {
             furi_string_cat_printf(
-                collector->response, "%.*s", (int)(get_end - line), line);
+                collector->response, "%.*s", (int)(end - line), line);
         }
         collector->in_body = false;
     } else if(collector->in_body && collector->response) {
@@ -469,6 +508,43 @@ static bool spoolman_parse_spool_list(const char* json, SpoolmanSpoolList* spool
     return false;
 }
 
+static bool spoolman_parse_first_filament(const char* json, SpoolmanFilament* filament) {
+    if(!json || !filament) {
+        return false;
+    }
+
+    const char* end = json + strlen(json);
+    const char* cursor = spoolman_json_skip_ws(json, end);
+    if(cursor >= end || *cursor != '[') {
+        return false;
+    }
+    cursor++;
+    cursor = spoolman_json_skip_ws(cursor, end);
+    if(cursor >= end || *cursor == ']') {
+        return false;
+    }
+    if(*cursor != '{') {
+        return false;
+    }
+
+    const char* filament_end = spoolman_json_skip_value(cursor, end);
+    if(!filament_end) {
+        return false;
+    }
+
+    return spoolman_parse_filament(cursor, (size_t)(filament_end - cursor), filament) &&
+           filament->id > 0;
+}
+
+static bool spoolman_parse_spool_id(const char* json, int* spool_id) {
+    if(!json || !spool_id) {
+        return false;
+    }
+
+    *spool_id = spoolman_json_get_int(json, strlen(json), "id", 0);
+    return *spool_id > 0;
+}
+
 static bool spoolman_spool_has_tag(const char* object, size_t object_len) {
     const char* extra = NULL;
     size_t extra_len = 0;
@@ -539,6 +615,25 @@ static void spoolman_api_build_url(SpoolmanApi* api, FuriString* url, const char
         furi_string_left(url, furi_string_size(url) - 1);
     }
     furi_string_cat_str(url, path);
+}
+
+static void spoolman_api_append_urlencoded(FuriString* output, const char* value) {
+    static const char hex[] = "0123456789ABCDEF";
+
+    furi_assert(output);
+    furi_assert(value);
+
+    for(size_t i = 0; value[i] != '\0'; i++) {
+        const unsigned char c = (unsigned char)value[i];
+        if((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+           c == '-' || c == '_' || c == '.' || c == '~') {
+            furi_string_push_back(output, c);
+        } else {
+            furi_string_push_back(output, '%');
+            furi_string_push_back(output, hex[(c >> 4) & 0x0F]);
+            furi_string_push_back(output, hex[c & 0x0F]);
+        }
+    }
 }
 
 static SpoolmanApiResult spoolman_api_request(
@@ -626,6 +721,46 @@ static SpoolmanApiResult spoolman_api_request(
     }
 
     return SpoolmanApiResultOk;
+}
+
+static SpoolmanApiResult spoolman_api_request_with_response(
+    SpoolmanApi* api,
+    HTTPMethod method,
+    const char* path,
+    const char* payload,
+    FuriString* response) {
+    if(!api || !path || !response) {
+        return SpoolmanApiResultInvalidArguments;
+    }
+    if(!api->http) {
+        return SpoolmanApiResultHttpUnavailable;
+    }
+
+    furi_string_reset(response);
+    furi_string_reset(api->last_error);
+    api->status_code = 0;
+    api->http->status_code = 0;
+    api->http->last_response[0] = '\0';
+
+    SpoolmanApiResponseCollector collector = {
+        .response = response,
+        .in_body = false,
+        .previous_callback = api->http->user_rx_line_cb,
+        .previous_context = api->http->user_callback_context,
+    };
+    api->http->user_rx_line_cb = spoolman_api_collect_response_line;
+    api->http->user_callback_context = &collector;
+
+    SpoolmanApiResult result = spoolman_api_request(api, method, path, payload);
+
+    api->http->user_rx_line_cb = collector.previous_callback;
+    api->http->user_callback_context = collector.previous_context;
+
+    if(result == SpoolmanApiResultOk && furi_string_empty(response)) {
+        furi_string_set(response, api->http->last_response);
+    }
+
+    return result;
 }
 
 static SpoolmanApiResult spoolman_api_get_path(
@@ -771,13 +906,20 @@ SpoolmanApiResult spoolman_api_health_check(SpoolmanApi* api) {
     return result;
 }
 
-SpoolmanApiResult spoolman_api_get_spool_count(SpoolmanApi* api, size_t* count) {
+SpoolmanApiResult spoolman_api_get_spool_count(
+    SpoolmanApi* api,
+    size_t* count,
+    bool allow_archived) {
     size_t total_count = 0;
-    return spoolman_api_get_spool_counts(api, count, &total_count);
+    return spoolman_api_get_spool_counts(api, count, &total_count, allow_archived);
 }
 
 SpoolmanApiResult
-    spoolman_api_get_spool_counts(SpoolmanApi* api, size_t* untagged_count, size_t* total_count) {
+    spoolman_api_get_spool_counts(
+        SpoolmanApi* api,
+        size_t* untagged_count,
+        size_t* total_count,
+        bool allow_archived) {
     if(!untagged_count || !total_count) {
         return SpoolmanApiResultInvalidArguments;
     }
@@ -787,7 +929,7 @@ SpoolmanApiResult
 
     FuriString* response = furi_string_alloc();
     SpoolmanApiResult result =
-        spoolman_api_get_path(api, SPOOLMAN_API_PATH_SPOOLS, response, true);
+        spoolman_api_get_path(api, spoolman_api_get_spools_path(allow_archived), response, true);
     if(result == SpoolmanApiResultOk &&
        !spoolman_count_spool_list(furi_string_get_cstr(response), untagged_count, total_count)) {
         spoolman_api_set_error(api, "Invalid spool response");
@@ -798,7 +940,8 @@ SpoolmanApiResult
     return result;
 }
 
-SpoolmanApiResult spoolman_api_get_spools(SpoolmanApi* api, SpoolmanSpoolList* spools) {
+SpoolmanApiResult
+    spoolman_api_get_spools(SpoolmanApi* api, SpoolmanSpoolList* spools, bool allow_archived) {
     if(!spools) {
         return SpoolmanApiResultInvalidArguments;
     }
@@ -807,7 +950,7 @@ SpoolmanApiResult spoolman_api_get_spools(SpoolmanApi* api, SpoolmanSpoolList* s
 
     FuriString* response = furi_string_alloc();
     SpoolmanApiResult result =
-        spoolman_api_get_path(api, SPOOLMAN_API_PATH_SPOOLS, response, true);
+        spoolman_api_get_path(api, spoolman_api_get_spools_path(allow_archived), response, true);
     if(result == SpoolmanApiResultOk &&
        !spoolman_parse_spool_list(furi_string_get_cstr(response), spools)) {
         spoolman_spool_list_clear(spools);
@@ -854,6 +997,71 @@ void spoolman_api_fill_missing_spool_details(SpoolmanApi* api, SpoolmanSpoolList
 
         furi_string_free(response);
     }
+}
+
+SpoolmanApiResult spoolman_api_find_bambu_filament(
+    SpoolmanApi* api,
+    const char* article_number,
+    const char* color_hex,
+    SpoolmanFilament* filament) {
+    if(!api || !article_number || !color_hex || !filament || article_number[0] == '\0' ||
+       color_hex[0] == '\0') {
+        return SpoolmanApiResultInvalidArguments;
+    }
+
+    filament->id = 0;
+    furi_string_reset(filament->name);
+    furi_string_reset(filament->material);
+    furi_string_reset(filament->vendor.name);
+    furi_string_reset(filament->vendor.external_id);
+    furi_string_reset(filament->color_hex);
+    furi_string_reset(filament->external_id);
+
+    FuriString* path = furi_string_alloc();
+    FuriString* response = furi_string_alloc();
+    furi_string_set_str(path, SPOOLMAN_API_PATH_FILAMENT);
+    furi_string_cat_str(path, "?vendor.name=");
+    spoolman_api_append_urlencoded(path, "Bambu Lab");
+    furi_string_cat_str(path, "&article_number=");
+    spoolman_api_append_urlencoded(path, article_number);
+    furi_string_cat_str(path, "&color_hex=");
+    spoolman_api_append_urlencoded(path, color_hex);
+    furi_string_cat_str(path, "&color_similarity_threshold=0&limit=1&offset=0");
+
+    SpoolmanApiResult result =
+        spoolman_api_get_path(api, furi_string_get_cstr(path), response, true);
+    if(result == SpoolmanApiResultOk &&
+       !spoolman_parse_first_filament(furi_string_get_cstr(response), filament)) {
+        spoolman_api_set_error(api, "Filament not found");
+        result = SpoolmanApiResultParseError;
+    }
+
+    furi_string_free(response);
+    furi_string_free(path);
+    return result;
+}
+
+SpoolmanApiResult spoolman_api_create_spool(SpoolmanApi* api, int filament_id, int* spool_id) {
+    if(!api || filament_id <= 0 || !spool_id) {
+        return SpoolmanApiResultInvalidArguments;
+    }
+
+    *spool_id = 0;
+
+    char payload[64];
+    snprintf(payload, sizeof(payload), "{\"filament_id\":%d}", filament_id);
+
+    FuriString* response = furi_string_alloc();
+    SpoolmanApiResult result =
+        spoolman_api_request_with_response(api, POST, SPOOLMAN_API_PATH_SPOOLS, payload, response);
+    if(result == SpoolmanApiResultOk &&
+       !spoolman_parse_spool_id(furi_string_get_cstr(response), spool_id)) {
+        spoolman_api_set_error(api, "Invalid create spool response");
+        result = SpoolmanApiResultParseError;
+    }
+    furi_string_free(response);
+
+    return result;
 }
 
 SpoolmanApiResult spoolman_api_update_spool_tag(SpoolmanApi* api, int spool_id, const char* tag) {

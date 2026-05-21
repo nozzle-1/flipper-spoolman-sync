@@ -70,14 +70,39 @@ void spoolman_spool_list_init(SpoolmanSpoolList* list);
 
 void spoolman_spool_list_clear(SpoolmanSpoolList* list);
 
-SpoolmanApiResult spoolman_api_get_spool_count(SpoolmanApi* api, size_t* count);
+void spoolman_filament_init(SpoolmanFilament* filament);
+
+void spoolman_filament_clear(SpoolmanFilament* filament);
+
+void spoolman_filament_copy_into(SpoolmanFilament* destination, const SpoolmanFilament* source);
+
+SpoolmanApiResult spoolman_api_get_spool_count(
+    SpoolmanApi* api,
+    size_t* count,
+    bool allow_archived);
 
 SpoolmanApiResult
-    spoolman_api_get_spool_counts(SpoolmanApi* api, size_t* untagged_count, size_t* total_count);
+    spoolman_api_get_spool_counts(
+        SpoolmanApi* api,
+        size_t* untagged_count,
+        size_t* total_count,
+        bool allow_archived);
 
-SpoolmanApiResult spoolman_api_get_spools(SpoolmanApi* api, SpoolmanSpoolList* spools);
+SpoolmanApiResult
+    spoolman_api_get_spools(SpoolmanApi* api, SpoolmanSpoolList* spools, bool allow_archived);
 
 void spoolman_api_fill_missing_spool_details(SpoolmanApi* api, SpoolmanSpoolList* spools);
+
+SpoolmanApiResult spoolman_api_find_bambu_filament(
+    SpoolmanApi* api,
+    const char* article_number,
+    const char* color_hex,
+    SpoolmanFilament* filament);
+
+SpoolmanApiResult spoolman_api_create_spool(
+    SpoolmanApi* api,
+    int filament_id,
+    int* spool_id);
 
 SpoolmanApiResult spoolman_api_update_spool_tag(SpoolmanApi* api, int spool_id, const char* tag);
 
