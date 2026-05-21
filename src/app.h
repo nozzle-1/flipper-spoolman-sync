@@ -10,7 +10,6 @@
 #include <storage/storage.h>
 
 #define SPOOLMAN_URL_MAX_LEN 255
-
 typedef struct UART_TextInput UART_TextInput;
 
 typedef enum {
@@ -64,10 +63,12 @@ typedef struct {
     char spoolman_base_url_input[SPOOLMAN_URL_MAX_LEN + 1];
     FuriString* info_message;
     FuriString* spoolman_error;
+    FuriString* create_error;
     int spoolman_status_code;
     size_t spools_to_update_count;
     size_t total_spools_count;
     SpoolmanSpoolList spools;
+    uint8_t read_tag_page;
     size_t current_untagged_spool_index;
     bool update_detail_visible;
     bool update_scan_active;
@@ -85,6 +86,10 @@ const SpoolmanSpool*
 void app_check_spoolman_health(SpoolmanSyncApp* app);
 
 void app_start_update_mode(SpoolmanSyncApp* app);
+
+void app_start_create_mode(SpoolmanSyncApp* app);
+
+void app_start_create_scan(SpoolmanSyncApp* app);
 
 void app_start_update_scan(SpoolmanSyncApp* app);
 

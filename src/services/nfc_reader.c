@@ -4,11 +4,13 @@
 #include <nfc/nfc.h>
 #include <nfc/protocols/mf_classic/mf_classic_poller.h>
 
+static const char* TAG = "NfcReader";
+
 struct NfcReader {
     Nfc* nfc;
     NfcPoller* poller;
-    MfClassicKey sector2_key;
-    bool sector2_requested;
+    MfClassicKey sector_keys[NFC_SECTOR_COUNT];
+    uint8_t next_sector_to_read;
     bool has_result;
     NfcScanResult result;
     NfcReadCallback callback;
@@ -138,9 +140,9 @@ static void hmac_sha256(
     size_t data_len,
     uint8_t* out) {
     furi_assert(key_len <= 64);
-    furi_assert(data_len <= 32);
+    furi_assert(data_len <= 65);
 
-    uint8_t inner[64 + 32] = {};
+    uint8_t inner[64 + 65] = {};
     uint8_t outer[64 + 32] = {};
     uint8_t inner_hash[32];
 
@@ -157,7 +159,42 @@ static void hmac_sha256(
     sha256(outer, sizeof(outer), out);
 }
 
-static void derive_bambu_key(const uint8_t* uid, size_t uid_len, uint8_t* key_out) {
+static void hkdf_expand(
+    const uint8_t* prk,
+    size_t prk_len,
+    const uint8_t* info,
+    size_t info_len,
+    uint8_t* out,
+    size_t out_len) {
+    furi_assert(prk);
+    furi_assert(prk_len <= 64);
+    furi_assert(info);
+    furi_assert(out);
+    furi_assert(out_len > 0);
+    furi_assert(info_len <= 32);
+
+    uint8_t previous[32];
+    size_t previous_len = 0;
+    uint8_t block_input[32 + 32 + 1];
+    uint8_t counter = 1;
+    size_t offset = 0;
+
+    while(offset < out_len) {
+        memcpy(block_input, previous, previous_len);
+        memcpy(&block_input[previous_len], info, info_len);
+        block_input[previous_len + info_len] = counter;
+
+        hmac_sha256(prk, prk_len, block_input, previous_len + info_len + 1, previous);
+
+        size_t copy_len = MIN(sizeof(previous), out_len - offset);
+        memcpy(&out[offset], previous, copy_len);
+        offset += copy_len;
+        previous_len = sizeof(previous);
+        counter++;
+    }
+}
+
+static void derive_bambu_keys(const uint8_t* uid, size_t uid_len, MfClassicKey* key_out) {
     const uint8_t salt[16] = {
         0x9A,
         0x75,
@@ -178,15 +215,13 @@ static void derive_bambu_key(const uint8_t* uid, size_t uid_len, uint8_t* key_ou
     uint8_t prk[32];
     hmac_sha256(salt, 16, uid, uid_len, prk);
 
-    uint8_t info[] = "RFID-A";
-    uint8_t t1_input[8];
-    memcpy(t1_input, info, 7);
-    t1_input[7] = 0x01;
+    const uint8_t info[] = {'R', 'F', 'I', 'D', '-', 'A', '\0'};
+    uint8_t okm[NFC_SECTOR_COUNT * sizeof(MfClassicKey)];
+    hkdf_expand(prk, sizeof(prk), info, sizeof(info), okm, sizeof(okm));
 
-    uint8_t t1[32];
-    hmac_sha256(prk, 32, t1_input, 8, t1);
-
-    memcpy(key_out, &t1[12], 6);
+    for(size_t i = 0; i < NFC_SECTOR_COUNT; i++) {
+        memcpy(key_out[i].data, &okm[i * sizeof(MfClassicKey)], sizeof(key_out[i].data));
+    }
 }
 
 static void emit(NfcReader* service, SpoolmanNfcServiceEvent event, NfcScanResult* result) {
@@ -205,43 +240,70 @@ static NfcCommand callback(NfcGenericEvent event, void* context) {
     MfClassicPollerEvent* mfc_event = event.event_data;
 
     if(mfc_event->type == MfClassicPollerEventTypeRequestMode) {
-        service->sector2_requested = false;
+        service->next_sector_to_read = 0;
         service->has_result = false;
+        memset(&service->result, 0, sizeof(service->result));
         emit(service, SpoolmanNfcServiceEventReading, NULL);
 
         const MfClassicData* mfc_data = nfc_poller_get_data(service->poller);
         size_t uid_len = 0;
         const uint8_t* uid = mf_classic_get_uid(mfc_data, &uid_len);
-        derive_bambu_key(uid, uid_len, service->sector2_key.data);
+        FURI_LOG_I(TAG, "Tag detected, uid_len=%u", (unsigned)uid_len);
+        derive_bambu_keys(uid, uid_len, service->sector_keys);
 
         mfc_event->data->poller_mode.mode = MfClassicPollerModeRead;
     } else if(mfc_event->type == MfClassicPollerEventTypeRequestReadSector) {
         MfClassicPollerEventDataReadSectorRequest* request =
             &mfc_event->data->read_sector_request_data;
 
-        if(!service->sector2_requested) {
-            service->sector2_requested = true;
-            request->sector_num = 2;
-            request->key = service->sector2_key;
+        if(service->next_sector_to_read < NFC_SECTOR_COUNT) {
+            request->sector_num = service->next_sector_to_read;
+            request->key = service->sector_keys[service->next_sector_to_read];
             request->key_type = MfClassicKeyTypeA;
             request->key_provided = true;
+            FURI_LOG_D(TAG, "Request read sector %u", (unsigned)request->sector_num);
+            service->next_sector_to_read++;
         } else {
             request->key_provided = false;
         }
     } else if(mfc_event->type == MfClassicPollerEventTypeSuccess) {
         const MfClassicData* mfc_data = nfc_poller_get_data(service->poller);
 
-        if(mf_classic_is_block_read(mfc_data, 9)) {
-            memcpy(
-                service->result.block9, mfc_data->block[9].data, sizeof(service->result.block9));
+        size_t uid_len = 0;
+        const uint8_t* uid = mf_classic_get_uid(mfc_data, &uid_len);
+        if(uid && uid_len <= NFC_MAX_UID_SIZE) {
+            service->result.uid_len = uid_len;
+            memcpy(service->result.uid, uid, uid_len);
+        }
+
+        for(size_t i = 0; i < NFC_BLOCK_COUNT; i++) {
+            service->result.block_read[i] = mf_classic_is_block_read(mfc_data, i);
+            if(service->result.block_read[i]) {
+                memcpy(service->result.blocks[i], mfc_data->block[i].data, NFC_BLOCK_SIZE);
+            }
+        }
+
+        if(service->result.block_read[9]) {
+            size_t read_count = 0;
+            for(size_t i = 0; i < NFC_BLOCK_COUNT; i++) {
+                if(service->result.block_read[i]) {
+                    read_count++;
+                }
+            }
+            FURI_LOG_I(TAG, "Read complete, blocks_read=%u/%u", (unsigned)read_count, NFC_BLOCK_COUNT);
             service->has_result = true;
             emit(service, SpoolmanNfcServiceEventSuccess, &service->result);
         } else {
+            FURI_LOG_E(TAG, "Read finished but block 9 is unreadable");
             emit(service, SpoolmanNfcServiceEventError, NULL);
         }
 
         return NfcCommandStop;
     } else if(mfc_event->type == MfClassicPollerEventTypeFail) {
+        FURI_LOG_E(
+            TAG,
+            "Read failed near sector %u",
+            (unsigned)(service->next_sector_to_read == 0 ? 0 : service->next_sector_to_read - 1));
         emit(service, SpoolmanNfcServiceEventError, NULL);
         return NfcCommandStop;
     }

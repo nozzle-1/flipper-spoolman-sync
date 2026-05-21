@@ -42,8 +42,8 @@ void app_page_mode_select_draw(Canvas* canvas, const SpoolmanSyncApp* app) {
         10,
         50,
         app->selected_mode == AppModeCreate ?
-            (has_server_url ? "> 2. Create mode" : "> 2. Create mode [disabled]") :
-            (has_server_url ? "  2. Create mode" : "  2. Create mode [disabled]"));
+            "> 2. Read tag" :
+            "  2. Read tag");
     canvas_draw_str(
         canvas,
         10,
@@ -71,8 +71,8 @@ bool app_page_mode_select_handle_input(SpoolmanSyncApp* app, const InputEvent* e
         if(app->selected_mode == AppModeUpdate && has_server_url) {
             app_start_update_mode(app);
         }
-        if(app->selected_mode == AppModeCreate && has_server_url) {
-            //TODO: Implement create mode
+        if(app->selected_mode == AppModeCreate) {
+            app_start_create_mode(app);
         }
         if(app->selected_mode == AppModeConfig) {
             app_open_base_url_editor(app);

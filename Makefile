@@ -8,3 +8,6 @@ build:
 dev:
 	make clean
 	cd ./src && ufbt launch
+
+fetch_filaments:
+	node ./tools/generate_bambu_lab_filaments_file.js

@@ -4,7 +4,7 @@
 
 static void app_page_update_format_scan_hex(const NfcScanResult* result, char* output) {
     for(size_t i = 0; i < NFC_BLOCK_SIZE; i++) {
-        snprintf(&output[i * 2], 3, "%02X", result->block9[i]);
+        snprintf(&output[i * 2], 3, "%02X", result->blocks[9][i]);
     }
 }
 

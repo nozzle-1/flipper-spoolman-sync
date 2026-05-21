@@ -28,12 +28,6 @@ typedef struct {
     void* previous_context;
 } SpoolmanApiResponseCollector;
 
-static void spoolman_vendor_init(SpoolmanVendor* vendor) {
-    memset(vendor, 0, sizeof(SpoolmanVendor));
-    vendor->name = furi_string_alloc();
-    vendor->external_id = furi_string_alloc();
-}
-
 static void spoolman_vendor_clear(SpoolmanVendor* vendor) {
     if(vendor->name) {
         furi_string_free(vendor->name);
@@ -47,10 +41,7 @@ static void spoolman_vendor_clear(SpoolmanVendor* vendor) {
 static void spoolman_filament_init(SpoolmanFilament* filament) {
     memset(filament, 0, sizeof(SpoolmanFilament));
     filament->name = furi_string_alloc();
-    spoolman_vendor_init(&filament->vendor);
     filament->material = furi_string_alloc();
-    filament->color_hex = furi_string_alloc();
-    filament->external_id = furi_string_alloc();
 }
 
 static void spoolman_filament_clear(SpoolmanFilament* filament) {
@@ -72,12 +63,8 @@ static void spoolman_filament_clear(SpoolmanFilament* filament) {
 
 static void spoolman_spool_init(SpoolmanSpool* spool) {
     memset(spool, 0, sizeof(SpoolmanSpool));
-    spool->registered = furi_string_alloc();
-    spool->first_used = furi_string_alloc();
-    spool->last_used = furi_string_alloc();
     spoolman_filament_init(&spool->filament);
     spool->tag = furi_string_alloc();
-    spool->active_tray = furi_string_alloc();
 }
 
 static void spoolman_spool_clear(SpoolmanSpool* spool) {
@@ -319,6 +306,10 @@ static void spoolman_json_get_string(
     size_t object_len,
     const char* key,
     FuriString* output) {
+    if(!output) {
+        return;
+    }
+
     furi_string_reset(output);
 
     const char* value = NULL;
@@ -357,20 +348,6 @@ static void spoolman_json_get_string(
     }
 }
 
-static double spoolman_json_get_double(
-    const char* object,
-    size_t object_len,
-    const char* key,
-    double fallback) {
-    const char* value = NULL;
-    size_t value_len = 0;
-    if(!spoolman_json_object_get(object, object_len, key, &value, &value_len)) {
-        return fallback;
-    }
-    UNUSED(value_len);
-    return strtod(value, NULL);
-}
-
 static int
     spoolman_json_get_int(const char* object, size_t object_len, const char* key, int fallback) {
     const char* value = NULL;
@@ -383,59 +360,24 @@ static int
 }
 
 static bool
-    spoolman_json_get_bool(const char* object, size_t object_len, const char* key, bool fallback) {
-    const char* value = NULL;
-    size_t value_len = 0;
-    if(!spoolman_json_object_get(object, object_len, key, &value, &value_len)) {
-        return fallback;
-    }
-    return value_len >= 4 && strncmp(value, "true", 4) == 0;
-}
-
-static bool spoolman_parse_vendor(const char* object, size_t object_len, SpoolmanVendor* vendor) {
-    vendor->id = spoolman_json_get_int(object, object_len, "id", 0);
-    spoolman_json_get_string(object, object_len, "name", vendor->name);
-    spoolman_json_get_string(object, object_len, "external_id", vendor->external_id);
-    return true;
-}
-
-static bool
     spoolman_parse_filament(const char* object, size_t object_len, SpoolmanFilament* filament) {
+    if(!filament) {
+        return false;
+    }
+
     filament->id = spoolman_json_get_int(object, object_len, "id", 0);
     spoolman_json_get_string(object, object_len, "name", filament->name);
     spoolman_json_get_string(object, object_len, "material", filament->material);
-    filament->density = spoolman_json_get_double(object, object_len, "density", 0);
-    filament->diameter = spoolman_json_get_double(object, object_len, "diameter", 0);
-    filament->weight = spoolman_json_get_double(object, object_len, "weight", 0);
-    filament->spool_weight = spoolman_json_get_double(object, object_len, "spool_weight", 0);
-    filament->settings_extruder_temp =
-        spoolman_json_get_int(object, object_len, "settings_extruder_temp", 0);
-    filament->settings_bed_temp =
-        spoolman_json_get_int(object, object_len, "settings_bed_temp", 0);
-    spoolman_json_get_string(object, object_len, "color_hex", filament->color_hex);
-    spoolman_json_get_string(object, object_len, "external_id", filament->external_id);
-
-    const char* vendor = NULL;
-    size_t vendor_len = 0;
-    if(spoolman_json_object_get(object, object_len, "vendor", &vendor, &vendor_len)) {
-        spoolman_parse_vendor(vendor, vendor_len, &filament->vendor);
-    }
 
     return true;
 }
 
 static bool spoolman_parse_spool(const char* object, size_t object_len, SpoolmanSpool* spool) {
+    if(!spool) {
+        return false;
+    }
+
     spool->id = spoolman_json_get_int(object, object_len, "id", 0);
-    spoolman_json_get_string(object, object_len, "registered", spool->registered);
-    spoolman_json_get_string(object, object_len, "first_used", spool->first_used);
-    spoolman_json_get_string(object, object_len, "last_used", spool->last_used);
-    spool->remaining_weight = spoolman_json_get_double(object, object_len, "remaining_weight", 0);
-    spool->initial_weight = spoolman_json_get_double(object, object_len, "initial_weight", 0);
-    spool->spool_weight = spoolman_json_get_double(object, object_len, "spool_weight", 0);
-    spool->used_weight = spoolman_json_get_double(object, object_len, "used_weight", 0);
-    spool->remaining_length = spoolman_json_get_double(object, object_len, "remaining_length", 0);
-    spool->used_length = spoolman_json_get_double(object, object_len, "used_length", 0);
-    spool->archived = spoolman_json_get_bool(object, object_len, "archived", false);
 
     const char* filament = NULL;
     size_t filament_len = 0;
@@ -447,7 +389,6 @@ static bool spoolman_parse_spool(const char* object, size_t object_len, Spoolman
     size_t extra_len = 0;
     if(spoolman_json_object_get(object, object_len, "extra", &extra, &extra_len)) {
         spoolman_json_get_string(extra, extra_len, "tag", spool->tag);
-        spoolman_json_get_string(extra, extra_len, "active_tray", spool->active_tray);
     }
 
     return true;

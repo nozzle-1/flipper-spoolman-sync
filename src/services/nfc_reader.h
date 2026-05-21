@@ -1,9 +1,13 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define NFC_BLOCK_SIZE (16)
+#define NFC_MAX_UID_SIZE (10)
+#define NFC_SECTOR_COUNT (16)
+#define NFC_BLOCK_COUNT (NFC_SECTOR_COUNT * 4)
 
 typedef struct NfcReader NfcReader;
 
@@ -14,7 +18,10 @@ typedef enum {
 } SpoolmanNfcServiceEvent;
 
 typedef struct {
-    uint8_t block9[NFC_BLOCK_SIZE];
+    size_t uid_len;
+    uint8_t uid[NFC_MAX_UID_SIZE];
+    bool block_read[NFC_BLOCK_COUNT];
+    uint8_t blocks[NFC_BLOCK_COUNT][NFC_BLOCK_SIZE];
 } NfcScanResult;
 
 typedef void (

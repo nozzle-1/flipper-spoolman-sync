@@ -11,7 +11,6 @@
 #define TAG "SpoolmanSync"
 
 #define SPOOLMAN_URL_CONFIG_PATH APP_DATA_PATH("spoolman_url.txt")
-
 static const NotificationSequence sequence_tag_found = {
     &message_note_c6,
     &message_delay_25,
@@ -50,6 +49,26 @@ static void app_trim_ascii_whitespace(char* value) {
         memmove(value, value + start, trimmed_len);
     }
     value[trimmed_len] = '\0';
+}
+
+static void app_format_bytes_hex(
+    const uint8_t* bytes,
+    size_t bytes_len,
+    char* output,
+    size_t output_size) {
+    furi_assert(bytes);
+    furi_assert(output);
+    furi_assert(output_size >= (bytes_len * 2) + 1);
+
+    for(size_t i = 0; i < bytes_len; i++) {
+        snprintf(&output[i * 2], 3, "%02X", bytes[i]);
+    }
+}
+
+static void app_format_block_hex(const NfcScanResult* result, size_t block_index, char* output) {
+    furi_assert(result);
+    furi_assert(block_index < NFC_BLOCK_COUNT);
+    app_format_bytes_hex(result->blocks[block_index], NFC_BLOCK_SIZE, output, (NFC_BLOCK_SIZE * 2) + 1);
 }
 
 static bool app_write_spoolman_url_config(const char* base_url) {
@@ -385,6 +404,14 @@ bool app_spool_is_untagged(const SpoolmanSpool* spool) {
     return spool && furi_string_empty(spool->tag);
 }
 
+static void app_reset_create_state(SpoolmanSyncApp* app) {
+    furi_assert(app);
+
+    memset(&app->scan_result, 0, sizeof(app->scan_result));
+    app->read_tag_page = 0;
+    furi_string_reset(app->create_error);
+}
+
 static void app_reset_update_scan_state(SpoolmanSyncApp* app) {
     memset(&app->update_scan_result, 0, sizeof(app->update_scan_result));
     app->update_scan_active = false;
@@ -399,10 +426,7 @@ static void
     furi_assert(result);
     furi_assert(output);
     furi_assert(output_size >= (NFC_BLOCK_SIZE * 2) + 1);
-
-    for(size_t i = 0; i < NFC_BLOCK_SIZE; i++) {
-        snprintf(&output[i * 2], 3, "%02X", result->block9[i]);
-    }
+    app_format_block_hex(result, 9, output);
 }
 
 static const SpoolmanSpool*
@@ -488,9 +512,13 @@ static void nfc_service_callback(
     } else if(event == SpoolmanNfcServiceEventSuccess) {
         app->status = AppStatusSuccess;
         app->scan_result = *result;
+        app->read_tag_page = 0;
+        furi_string_reset(app->create_error);
         play_tag_found_sound = true;
     } else if(event == SpoolmanNfcServiceEventError) {
+        FURI_LOG_E(TAG, "Read tag NFC scan failed");
         app->status = AppStatusError;
+        furi_string_set_str(app->create_error, "Scan failed");
     }
     furi_mutex_release(app->mutex);
 
@@ -506,6 +534,32 @@ void app_stop_create_mode(SpoolmanSyncApp* app) {
         nfc_reader_stop(app->nfc_service);
         app->nfc_service = NULL;
     }
+}
+
+void app_start_create_mode(SpoolmanSyncApp* app) {
+    app_stop_create_mode(app);
+
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    app_reset_create_state(app);
+    app_clear_http_status(app);
+    app->status = AppStatusScanning;
+    furi_mutex_release(app->mutex);
+
+    view_port_update(app->view_port);
+}
+
+void app_start_create_scan(SpoolmanSyncApp* app) {
+    app_stop_create_mode(app);
+
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    app_reset_create_state(app);
+    app_clear_http_status(app);
+    app->status = AppStatusReading;
+    furi_mutex_release(app->mutex);
+    view_port_update(app->view_port);
+
+    app->nfc_service = nfc_reader_alloc(nfc_service_callback, app);
+    nfc_reader_start(app->nfc_service);
 }
 
 void app_check_spoolman_health(SpoolmanSyncApp* app) {
@@ -609,56 +663,48 @@ bool app_update_confirm_current_spool(SpoolmanSyncApp* app) {
     int spool_id = 0;
     char tag_hex[(NFC_BLOCK_SIZE * 2) + 1];
     SpoolmanApiResult result = SpoolmanApiResultInvalidArguments;
-    SpoolmanSpoolList remote_spools;
-    spoolman_spool_list_init(&remote_spools);
+    bool tag_already_defined = false;
+    int existing_spool_id = 0;
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     const SpoolmanSpool* spool =
         app_get_untagged_spool_by_index(app, app->current_untagged_spool_index);
     if(!spool || !app->update_scan_has_result) {
         furi_mutex_release(app->mutex);
-        spoolman_spool_list_clear(&remote_spools);
         return false;
     }
 
     spool_id = spool->id;
     app_format_scan_result_hex(&app->update_scan_result, tag_hex, sizeof(tag_hex));
+    const SpoolmanSpool* existing_spool = app_find_spool_by_tag(&app->spools, tag_hex, spool_id);
+    if(existing_spool) {
+        tag_already_defined = true;
+        existing_spool_id = existing_spool->id;
+    }
     app->update_patch_in_progress = true;
     app->update_patch_error = false;
     app_clear_http_status(app);
     furi_mutex_release(app->mutex);
     view_port_update(app->view_port);
 
-    app_stop_create_mode(app);
-
-    result = spoolman_api_get_spools(app->spoolman_api, &remote_spools);
-    if(result == SpoolmanApiResultOk) {
-        const SpoolmanSpool* existing_spool =
-            app_find_spool_by_tag(&remote_spools, tag_hex, spool_id);
-
-        if(existing_spool) {
-            char error_message[48];
-            snprintf(
-                error_message,
-                sizeof(error_message),
-                "Tag already defined on #%d",
-                existing_spool->id);
-            furi_mutex_acquire(app->mutex, FuriWaitForever);
-            app->update_patch_in_progress = false;
-            app->update_patch_error = true;
-            app->spoolman_status_code = 0;
-            furi_string_set_str(app->spoolman_error, error_message);
-            furi_mutex_release(app->mutex);
-            spoolman_spool_list_clear(&remote_spools);
-            app_notify(app, &sequence_error);
-            view_port_update(app->view_port);
-            return false;
-        }
-
-        result = spoolman_api_update_spool_tag(app->spoolman_api, spool_id, tag_hex);
+    if(tag_already_defined) {
+        char error_message[48];
+        snprintf(
+            error_message, sizeof(error_message), "Tag already defined on #%d", existing_spool_id);
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        app->update_patch_in_progress = false;
+        app->update_patch_error = true;
+        app->spoolman_status_code = 0;
+        furi_string_set_str(app->spoolman_error, error_message);
+        furi_mutex_release(app->mutex);
+        app_notify(app, &sequence_error);
+        view_port_update(app->view_port);
+        return false;
     }
 
-    spoolman_spool_list_clear(&remote_spools);
+    app_stop_create_mode(app);
+
+    result = spoolman_api_update_spool_tag(app->spoolman_api, spool_id, tag_hex);
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->update_patch_in_progress = false;
@@ -727,9 +773,6 @@ void app_start_update_mode(SpoolmanSyncApp* app) {
     spoolman_spool_list_init(&spools);
     if(app->spoolman_api) {
         result = spoolman_api_get_spools(app->spoolman_api, &spools);
-        if(result == SpoolmanApiResultOk) {
-            spoolman_api_fill_missing_spool_details(app->spoolman_api, &spools);
-        }
     }
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
@@ -788,6 +831,7 @@ int32_t entrypoint(void* p) {
     app->spoolman_base_url = app_load_spoolman_base_url();
     app->info_message = furi_string_alloc();
     app->spoolman_error = furi_string_alloc();
+    app->create_error = furi_string_alloc();
 
     app->view_port = view_port_alloc();
     view_port_draw_callback_set(app->view_port, draw_callback, app);
@@ -839,6 +883,7 @@ int32_t entrypoint(void* p) {
     furi_string_free(app->spoolman_base_url);
     furi_string_free(app->info_message);
     furi_string_free(app->spoolman_error);
+    furi_string_free(app->create_error);
     furi_mutex_free(app->mutex);
     free(app);
 
