@@ -2,13 +2,24 @@
 
 #include <stdio.h>
 
+static bool app_page_mode_select_has_server_url(const SpoolmanSyncApp* app) {
+    return app && app->spoolman_base_url && !furi_string_empty(app->spoolman_base_url);
+}
+
 static void app_page_mode_select_draw_url(Canvas* canvas, const SpoolmanSyncApp* app) {
+    if(!app_page_mode_select_has_server_url(app)) {
+        canvas_draw_str(canvas, 10, 25, "No server URL configured");
+        return;
+    }
+
     char url_line[23];
     snprintf(url_line, sizeof(url_line), "%.22s", furi_string_get_cstr(app->spoolman_base_url));
     canvas_draw_str(canvas, 10, 25, url_line);
 }
 
 void app_page_mode_select_draw(Canvas* canvas, const SpoolmanSyncApp* app) {
+    bool has_server_url = app_page_mode_select_has_server_url(app);
+
     canvas_draw_str(canvas, 10, 15, "Spoolman Sync");
 
     canvas_set_font(canvas, FontSecondary);
@@ -23,13 +34,16 @@ void app_page_mode_select_draw(Canvas* canvas, const SpoolmanSyncApp* app) {
         canvas,
         10,
         38,
-        app->selected_mode == AppModeUpdate ? "> 1. Update mode" : "  1. Update mode");
+        app->selected_mode == AppModeUpdate ?
+            (has_server_url ? "> 1. Update mode" : "> 1. Update mode [disabled]") :
+            (has_server_url ? "  1. Update mode" : "  1. Update mode [disabled]"));
     canvas_draw_str(
         canvas,
         10,
         50,
-        app->selected_mode == AppModeCreate ? "> 2. Create mode (Coming soon)" :
-                                              "  2. Create mode");
+        app->selected_mode == AppModeCreate ?
+            (has_server_url ? "> 2. Create mode" : "> 2. Create mode [disabled]") :
+            (has_server_url ? "  2. Create mode" : "  2. Create mode [disabled]"));
     canvas_draw_str(
         canvas,
         10,
@@ -38,13 +52,15 @@ void app_page_mode_select_draw(Canvas* canvas, const SpoolmanSyncApp* app) {
 }
 
 bool app_page_mode_select_handle_input(SpoolmanSyncApp* app, const InputEvent* event) {
+    bool has_server_url = app_page_mode_select_has_server_url(app);
+
     if(event->key == InputKeyUp || event->key == InputKeyDown) {
         furi_mutex_acquire(app->mutex, FuriWaitForever);
         if(event->key == InputKeyDown) {
             app->selected_mode = (app->selected_mode + 1) % 3;
         } else {
             app->selected_mode = app->selected_mode == AppModeUpdate ? AppModeConfig :
-                                                                      app->selected_mode - 1;
+                                                                       app->selected_mode - 1;
         }
         furi_mutex_release(app->mutex);
         view_port_update(app->view_port);
@@ -52,10 +68,10 @@ bool app_page_mode_select_handle_input(SpoolmanSyncApp* app, const InputEvent* e
     }
 
     if(event->key == InputKeyOk) {
-        if(app->selected_mode == AppModeUpdate) {
+        if(app->selected_mode == AppModeUpdate && has_server_url) {
             app_start_update_mode(app);
         }
-        if(app->selected_mode == AppModeCreate) {
+        if(app->selected_mode == AppModeCreate && has_server_url) {
             //TODO: Implement create mode
         }
         if(app->selected_mode == AppModeConfig) {

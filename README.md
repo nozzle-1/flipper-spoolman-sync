@@ -7,9 +7,7 @@ The Spoolman base URL is now loaded from:
 
 `/ext/apps_data/spoolman_sync/spoolman_url.txt`
 
-On first launch, the app creates this file automatically with the default value:
-
-`https://example.com`
+If the file does not exist yet, or if it is empty, the app opens directly on the URL entry screen.
 
 To point the app to another Spoolman instance, edit that file on the Flipper and put the full base URL on the first line, for example:
 

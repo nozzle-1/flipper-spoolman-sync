@@ -62,6 +62,8 @@ SpoolmanApi* spoolman_api_alloc(const char* base_url);
 
 void spoolman_api_free(SpoolmanApi* api);
 
+bool spoolman_api_set_base_url(SpoolmanApi* api, const char* base_url);
+
 SpoolmanApiResult spoolman_api_health_check(SpoolmanApi* api);
 
 void spoolman_spool_list_init(SpoolmanSpoolList* list);

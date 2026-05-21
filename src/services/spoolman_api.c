@@ -811,6 +811,15 @@ void spoolman_api_free(SpoolmanApi* api) {
     free(api);
 }
 
+bool spoolman_api_set_base_url(SpoolmanApi* api, const char* base_url) {
+    if(!api || !api->base_url || !base_url || base_url[0] == '\0') {
+        return false;
+    }
+
+    furi_string_set_str(api->base_url, base_url);
+    return true;
+}
+
 SpoolmanApiResult spoolman_api_health_check(SpoolmanApi* api) {
     SpoolmanApiResult result = spoolman_api_get_path(api, SPOOLMAN_API_PATH_HEALTH, NULL, false);
     if(result == SpoolmanApiResultOk && api->status_code != 200) {

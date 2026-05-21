@@ -12,10 +12,6 @@
 
 #define SPOOLMAN_URL_CONFIG_PATH APP_DATA_PATH("spoolman_url.txt")
 
-#ifndef SPOOLMAN_BASE_URL
-#define SPOOLMAN_BASE_URL "https://example.com"
-#endif
-
 static const NotificationSequence sequence_tag_found = {
     &message_note_c6,
     &message_delay_25,
@@ -83,22 +79,15 @@ static bool app_write_spoolman_url_config(const char* base_url) {
     return saved;
 }
 
-static void app_write_default_spoolman_url_config(void) {
-    if(!app_write_spoolman_url_config(SPOOLMAN_BASE_URL)) {
-        FURI_LOG_W(TAG, "Failed to initialize default Spoolman URL config");
-    }
-}
-
 static FuriString* app_load_spoolman_base_url(void) {
-    FuriString* base_url = furi_string_alloc_set(SPOOLMAN_BASE_URL);
+    FuriString* base_url = furi_string_alloc();
     Storage* storage = furi_record_open(RECORD_STORAGE);
     File* file = storage_file_alloc(storage);
 
     if(!storage_file_open(file, SPOOLMAN_URL_CONFIG_PATH, FSAM_READ, FSOM_OPEN_EXISTING)) {
-        FURI_LOG_I(TAG, "Config not found, creating default at %s", SPOOLMAN_URL_CONFIG_PATH);
+        FURI_LOG_I(TAG, "Config not found at %s", SPOOLMAN_URL_CONFIG_PATH);
         storage_file_free(file);
         furi_record_close(RECORD_STORAGE);
-        app_write_default_spoolman_url_config();
         return base_url;
     }
 
@@ -118,13 +107,17 @@ static FuriString* app_load_spoolman_base_url(void) {
     app_trim_ascii_whitespace(url_buffer);
 
     if(read_size == 0 || url_buffer[0] == '\0') {
-        FURI_LOG_W(TAG, "Config file is empty, using default Spoolman URL");
+        FURI_LOG_W(TAG, "Config file is empty");
         return base_url;
     }
 
     furi_string_set_str(base_url, url_buffer);
     FURI_LOG_I(TAG, "Loaded Spoolman URL: %s", furi_string_get_cstr(base_url));
     return base_url;
+}
+
+static bool app_has_spoolman_base_url(const SpoolmanSyncApp* app) {
+    return app && app->spoolman_base_url && !furi_string_empty(app->spoolman_base_url);
 }
 
 static bool app_ensure_spoolman_api(SpoolmanSyncApp* app) {
@@ -191,6 +184,8 @@ static int32_t app_base_url_test_worker(void* context) {
 
     char candidate[SPOOLMAN_URL_MAX_LEN + 1];
     char previous_base_url[SPOOLMAN_URL_MAX_LEN + 1];
+    bool reused_existing_api = false;
+    SpoolmanApi* test_api = NULL;
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     snprintf(candidate, sizeof(candidate), "%s", app->spoolman_base_url_input);
     snprintf(
@@ -211,11 +206,17 @@ static int32_t app_base_url_test_worker(void* context) {
         return 0;
     }
 
-    // The main app keeps a SpoolmanApi instance open, which already owns the UART.
-    // Release it temporarily so the validation request can allocate a fresh HTTP client.
-    app_reset_spoolman_api(app, NULL);
+    if(app->spoolman_api) {
+        reused_existing_api = spoolman_api_set_base_url(app->spoolman_api, candidate);
+        if(reused_existing_api) {
+            test_api = app->spoolman_api;
+        }
+    }
 
-    SpoolmanApi* test_api = spoolman_api_alloc(candidate);
+    if(!test_api) {
+        test_api = spoolman_api_alloc(candidate);
+    }
+
     SpoolmanApiResult result = SpoolmanApiResultHttpUnavailable;
     if(test_api) {
         result = spoolman_api_health_check(test_api);
@@ -234,8 +235,12 @@ static int32_t app_base_url_test_worker(void* context) {
         app_clear_http_status(app);
         furi_mutex_release(app->mutex);
 
-        app_reset_spoolman_api(app, candidate);
-        spoolman_api_free(test_api);
+        if(reused_existing_api) {
+            spoolman_api_set_base_url(app->spoolman_api, candidate);
+        } else {
+            app_reset_spoolman_api(app, candidate);
+            spoolman_api_free(test_api);
+        }
         view_port_update(app->view_port);
         return 0;
     }
@@ -262,18 +267,23 @@ static int32_t app_base_url_test_worker(void* context) {
         } else {
             FURI_LOG_W(TAG, "Base URL validation failed: Spoolman unreachable");
         }
-        spoolman_api_free(test_api);
+        if(!reused_existing_api) {
+            spoolman_api_free(test_api);
+        }
     } else {
         FURI_LOG_W(TAG, "Base URL validation failed: HTTP unavailable");
     }
 
-    app_reset_spoolman_api(app, previous_base_url);
+    if(reused_existing_api) {
+        spoolman_api_set_base_url(app->spoolman_api, previous_base_url);
+    } else {
+        app_reset_spoolman_api(app, previous_base_url);
+    }
     view_port_update(app->view_port);
     return 0;
 }
 
-static void app_base_url_result_callback(void* context) {
-    SpoolmanSyncApp* app = context;
+static void app_base_url_handle_save(SpoolmanSyncApp* app) {
     if(!app) {
         return;
     }
@@ -298,8 +308,17 @@ static void app_base_url_result_callback(void* context) {
     furi_thread_start(app->base_url_test_thread);
 }
 
-static void app_base_url_back_callback(void* context) {
+static void app_base_url_result_callback(void* context) {
     SpoolmanSyncApp* app = context;
+    if(!app) {
+        return;
+    }
+
+    AppEvent event = {.type = AppEventTypeBaseUrlSave};
+    furi_message_queue_put(app->input_queue, &event, FuriWaitForever);
+}
+
+static void app_base_url_handle_back(SpoolmanSyncApp* app) {
     if(!app) {
         return;
     }
@@ -312,6 +331,16 @@ static void app_base_url_back_callback(void* context) {
     app_close_base_url_editor(app);
 }
 
+static void app_base_url_back_callback(void* context) {
+    SpoolmanSyncApp* app = context;
+    if(!app) {
+        return;
+    }
+
+    AppEvent event = {.type = AppEventTypeBaseUrlBack};
+    furi_message_queue_put(app->input_queue, &event, FuriWaitForever);
+}
+
 void app_open_base_url_editor(SpoolmanSyncApp* app) {
     if(!app) {
         return;
@@ -320,11 +349,12 @@ void app_open_base_url_editor(SpoolmanSyncApp* app) {
     app_stop_create_mode(app);
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
+    const char* current_base_url = furi_string_get_cstr(app->spoolman_base_url);
     snprintf(
         app->spoolman_base_url_input,
         sizeof(app->spoolman_base_url_input),
         "%s",
-        furi_string_get_cstr(app->spoolman_base_url));
+        current_base_url[0] != '\0' ? current_base_url : "https://");
     app_clear_http_status(app);
     furi_string_reset(app->info_message);
     app->status = AppStatusEditingBaseUrl;
@@ -423,7 +453,11 @@ static void draw_callback(Canvas* canvas, void* context) {
 
 static void input_callback(InputEvent* input_event, void* context) {
     SpoolmanSyncApp* app = context;
-    furi_message_queue_put(app->input_queue, input_event, 0);
+    AppEvent event = {
+        .type = AppEventTypeInput,
+        .input = *input_event,
+    };
+    furi_message_queue_put(app->input_queue, &event, 0);
 }
 
 static void nfc_service_callback(
@@ -750,7 +784,7 @@ int32_t entrypoint(void* p) {
     app->selected_mode = AppModeUpdate;
     spoolman_spool_list_init(&app->spools);
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
-    app->input_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
+    app->input_queue = furi_message_queue_alloc(8, sizeof(AppEvent));
     app->spoolman_base_url = app_load_spoolman_base_url();
     app->info_message = furi_string_alloc();
     app->spoolman_error = furi_string_alloc();
@@ -767,12 +801,23 @@ int32_t entrypoint(void* p) {
     view_holder_set_back_callback(app->base_url_view_holder, app_base_url_back_callback, app);
     gui_add_view_port(app->gui, app->view_port, GuiLayerFullscreen);
 
-    app_check_spoolman_health(app);
+    if(app_has_spoolman_base_url(app)) {
+        app_check_spoolman_health(app);
+    } else {
+        app->status = AppStatusModeSelect;
+        app_open_base_url_editor(app);
+    }
 
-    InputEvent event;
+    AppEvent event;
     while(furi_message_queue_get(app->input_queue, &event, FuriWaitForever) == FuriStatusOk) {
-        if(app_pages_handle_input(app, &event)) {
-            break;
+        if(event.type == AppEventTypeInput) {
+            if(app_pages_handle_input(app, &event.input)) {
+                break;
+            }
+        } else if(event.type == AppEventTypeBaseUrlSave) {
+            app_base_url_handle_save(app);
+        } else if(event.type == AppEventTypeBaseUrlBack) {
+            app_base_url_handle_back(app);
         }
     }
 

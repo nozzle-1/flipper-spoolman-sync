@@ -34,6 +34,17 @@ typedef enum {
     AppModeConfig,
 } AppMode;
 
+typedef enum {
+    AppEventTypeInput,
+    AppEventTypeBaseUrlSave,
+    AppEventTypeBaseUrlBack,
+} AppEventType;
+
+typedef struct {
+    AppEventType type;
+    InputEvent input;
+} AppEvent;
+
 typedef struct {
     AppStatus status;
     AppMode selected_mode;
