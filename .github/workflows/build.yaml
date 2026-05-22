@@ -19,7 +19,7 @@ jobs:
         id: build
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v7
         with:
           name: spoolman_sync.fap
           path: ${{ steps.build.outputs.fap-artifacts }}
