@@ -21,6 +21,11 @@ typedef enum {
     AppStatusLoadingUpdate,
     AppStatusUpdateMode,
     AppStatusUpdateError,
+    AppStatusFindReady,
+    AppStatusFindReading,
+    AppStatusFindSearching,
+    AppStatusFindSuccess,
+    AppStatusFindError,
     AppStatusScanReady,
     AppStatusScanReading,
     AppStatusScanSuccess,
@@ -35,9 +40,10 @@ typedef enum {
 } AppStatus;
 
 typedef enum {
+    AppModeCreate,
+    AppModeFind,
     AppModeUpdate,
     AppModeScan,
-    AppModeCreate,
     AppModeConfig,
 } AppMode;
 
@@ -46,6 +52,7 @@ typedef enum {
     AppEventTypeBaseUrlSave,
     AppEventTypeBaseUrlBack,
     AppEventTypeCreateProcess,
+    AppEventTypeFindProcess,
 } AppEventType;
 
 typedef struct {
@@ -75,9 +82,22 @@ typedef struct {
     FuriString* create_error;
     FuriString* create_filament_name;
     FuriString* create_filament_material;
+    FuriString* create_existing_spool_name;
+    FuriString* create_existing_spool_material;
+    FuriString* find_error;
+    FuriString* find_filament_name;
+    FuriString* find_filament_material;
     int spoolman_status_code;
     int create_filament_id;
     int create_spool_id;
+    int create_existing_spool_id;
+    int find_filament_id;
+    int find_spool_id;
+    double create_filament_weight;
+    double create_existing_spool_weight;
+    double find_spool_weight;
+    bool create_existing_spool_has_remaining_weight;
+    bool find_spool_has_remaining_weight;
     size_t spools_to_update_count;
     size_t total_spools_count;
     SpoolmanSpoolList spools;
@@ -103,6 +123,10 @@ void app_start_update_mode(SpoolmanSyncApp* app);
 void app_start_scan_mode(SpoolmanSyncApp* app);
 
 void app_start_scan_read(SpoolmanSyncApp* app);
+
+void app_start_find_mode(SpoolmanSyncApp* app);
+
+void app_start_find_scan(SpoolmanSyncApp* app);
 
 void app_start_create_mode(SpoolmanSyncApp* app);
 

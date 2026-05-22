@@ -26,6 +26,26 @@ static const char* spoolman_api_get_spools_path(bool allow_archived) {
     return allow_archived ? SPOOLMAN_API_PATH_SPOOLS "?allow_archived=true" : SPOOLMAN_API_PATH_SPOOLS;
 }
 
+static void spoolman_api_build_spools_path(
+    char* output,
+    size_t output_size,
+    bool allow_archived,
+    int filament_id) {
+    furi_assert(output);
+    furi_assert(output_size > 0);
+
+    if(filament_id > 0) {
+        snprintf(
+            output,
+            output_size,
+            allow_archived ? "%s?filament_id=%d&allow_archived=true" : "%s?filament_id=%d",
+            SPOOLMAN_API_PATH_SPOOLS,
+            filament_id);
+    } else {
+        snprintf(output, output_size, "%s", spoolman_api_get_spools_path(allow_archived));
+    }
+}
+
 typedef struct {
     FuriString* response;
     bool in_body;
@@ -90,7 +110,7 @@ void spoolman_filament_copy_into(SpoolmanFilament* destination, const SpoolmanFi
     furi_string_set(destination->external_id, source->external_id);
 }
 
-static void spoolman_spool_init(SpoolmanSpool* spool) {
+void spoolman_spool_init(SpoolmanSpool* spool) {
     memset(spool, 0, sizeof(SpoolmanSpool));
     spool->registered = furi_string_alloc();
     spool->first_used = furi_string_alloc();
@@ -100,7 +120,7 @@ static void spoolman_spool_init(SpoolmanSpool* spool) {
     spool->active_tray = furi_string_alloc();
 }
 
-static void spoolman_spool_clear(SpoolmanSpool* spool) {
+void spoolman_spool_clear(SpoolmanSpool* spool) {
     if(spool->registered) {
         furi_string_free(spool->registered);
     }
@@ -398,6 +418,25 @@ static int
     return (int)strtol(value, NULL, 10);
 }
 
+static double spoolman_json_get_double(
+    const char* object,
+    size_t object_len,
+    const char* key,
+    double fallback) {
+    const char* value = NULL;
+    size_t value_len = 0;
+    if(!spoolman_json_object_get(object, object_len, key, &value, &value_len)) {
+        return fallback;
+    }
+
+    char buffer[32];
+    size_t copy_len = value_len < sizeof(buffer) - 1 ? value_len : sizeof(buffer) - 1;
+    memcpy(buffer, value, copy_len);
+    buffer[copy_len] = '\0';
+
+    return strtod(buffer, NULL);
+}
+
 static bool
     spoolman_parse_filament(const char* object, size_t object_len, SpoolmanFilament* filament) {
     if(!filament) {
@@ -407,6 +446,8 @@ static bool
     filament->id = spoolman_json_get_int(object, object_len, "id", 0);
     spoolman_json_get_string(object, object_len, "name", filament->name);
     spoolman_json_get_string(object, object_len, "material", filament->material);
+    filament->weight = spoolman_json_get_double(object, object_len, "weight", 0);
+    filament->spool_weight = spoolman_json_get_double(object, object_len, "spool_weight", 0);
 
     return true;
 }
@@ -430,10 +471,19 @@ static bool spoolman_parse_spool(const char* object, size_t object_len, Spoolman
         spoolman_json_get_string(extra, extra_len, "tag", spool->tag);
     }
 
+    spool->has_remaining_weight =
+        spoolman_json_object_get(object, object_len, "remaining_weight", &extra, &extra_len);
+    spool->remaining_weight = spoolman_json_get_double(object, object_len, "remaining_weight", 0);
+    spool->initial_weight = spoolman_json_get_double(object, object_len, "initial_weight", 0);
+    spool->spool_weight = spoolman_json_get_double(object, object_len, "spool_weight", 0);
+    spool->used_weight = spoolman_json_get_double(object, object_len, "used_weight", 0);
+    spool->remaining_length = spoolman_json_get_double(object, object_len, "remaining_length", 0);
+    spool->used_length = spoolman_json_get_double(object, object_len, "used_length", 0);
+
     return true;
 }
 
-static void spoolman_spool_copy_into(SpoolmanSpool* destination, const SpoolmanSpool* source) {
+void spoolman_spool_copy_into(SpoolmanSpool* destination, const SpoolmanSpool* source) {
     furi_assert(destination);
     furi_assert(source);
 
@@ -458,6 +508,7 @@ static void spoolman_spool_copy_into(SpoolmanSpool* destination, const SpoolmanS
     furi_string_set(destination->filament.color_hex, source->filament.color_hex);
     furi_string_set(destination->filament.external_id, source->filament.external_id);
 
+    destination->has_remaining_weight = source->has_remaining_weight;
     destination->remaining_weight = source->remaining_weight;
     destination->initial_weight = source->initial_weight;
     destination->spool_weight = source->spool_weight;
@@ -962,6 +1013,36 @@ SpoolmanApiResult
     return result;
 }
 
+SpoolmanApiResult spoolman_api_get_spools_by_filament(
+    SpoolmanApi* api,
+    int filament_id,
+    SpoolmanSpoolList* spools,
+    bool allow_archived) {
+    if(filament_id <= 0) {
+        return SpoolmanApiResultInvalidArguments;
+    }
+
+    char path[96];
+    spoolman_api_build_spools_path(path, sizeof(path), allow_archived, filament_id);
+
+    if(!spools) {
+        return SpoolmanApiResultInvalidArguments;
+    }
+
+    spoolman_spool_list_clear(spools);
+
+    FuriString* response = furi_string_alloc();
+    SpoolmanApiResult result = spoolman_api_get_path(api, path, response, true);
+    if(result == SpoolmanApiResultOk &&
+       !spoolman_parse_spool_list(furi_string_get_cstr(response), spools)) {
+        spoolman_spool_list_clear(spools);
+        spoolman_api_set_error(api, "Invalid spool response");
+        result = SpoolmanApiResultParseError;
+    }
+    furi_string_free(response);
+    return result;
+}
+
 void spoolman_api_fill_missing_spool_details(SpoolmanApi* api, SpoolmanSpoolList* spools) {
     if(!api || !spools) {
         return;
@@ -969,7 +1050,8 @@ void spoolman_api_fill_missing_spool_details(SpoolmanApi* api, SpoolmanSpoolList
 
     for(size_t i = 0; i < spools->count; i++) {
         SpoolmanSpool* spool = &spools->items[i];
-        if(!furi_string_empty(spool->filament.name) && !furi_string_empty(spool->filament.material)) {
+        if(spool->has_remaining_weight && !furi_string_empty(spool->filament.name) &&
+           !furi_string_empty(spool->filament.material)) {
             continue;
         }
 
@@ -1062,6 +1144,17 @@ SpoolmanApiResult spoolman_api_create_spool(SpoolmanApi* api, int filament_id, i
     furi_string_free(response);
 
     return result;
+}
+
+SpoolmanApiResult spoolman_api_delete_spool(SpoolmanApi* api, int spool_id) {
+    if(!api || spool_id <= 0) {
+        return SpoolmanApiResultInvalidArguments;
+    }
+
+    char path[48];
+    snprintf(path, sizeof(path), "%s/%d", SPOOLMAN_API_PATH_SPOOLS, spool_id);
+
+    return spoolman_api_request(api, DELETE, path, "{}");
 }
 
 SpoolmanApiResult spoolman_api_update_spool_tag(SpoolmanApi* api, int spool_id, const char* tag) {

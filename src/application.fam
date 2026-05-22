@@ -4,7 +4,7 @@ App(
     apptype=FlipperAppType.EXTERNAL,
     entry_point="entrypoint",
     requires=["nfc", "notification"],
-    stack_size=2 * 1024,
+    stack_size=4 * 1024,
     fap_category="NFC",
     fap_description="Scan your Bambu spool. Spoolman handles the rest.",
 )

@@ -13,57 +13,63 @@ static void app_page_update_draw_summary(Canvas* canvas, const SpoolmanSyncApp* 
     snprintf(
         untagged_count,
         sizeof(untagged_count),
-        "Untagged spools: %zu/%zu",
+        "%zu missing / %zu total",
         app->spools_to_update_count,
         app->total_spools_count);
-    canvas_draw_str(canvas, 5, 28, untagged_count);
-    canvas_draw_str(canvas, 5, 52, "UP/DOWN: browse");
-    canvas_draw_str(canvas, 5, 63, "OK: refresh");
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 26, "Spools without RFID tag");
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 40, untagged_count);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 54, "UPDOWN Review list");
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "OK Refresh");
 }
 
 static void app_page_update_draw_detail_status(Canvas* canvas, const SpoolmanSyncApp* app) {
+    char line[25];
+
     if(app->update_patch_in_progress) {
-        canvas_draw_str(canvas, 5, 50, "Updating Spoolman...");
-        canvas_draw_str(canvas, 5, 63, "Wait...");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 52, "Saving tag to Spoolman");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "Please wait");
         return;
     }
 
     if(app->update_scan_active) {
-        canvas_draw_str(canvas, 5, 50, "Scanning tag...");
-        canvas_draw_str(canvas, 5, 63, "UP/DOWN: skip");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 52, "Hold spool near reader");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "UPDOWN Skip");
         return;
     }
 
     if(app->update_patch_error) {
         if(app->spoolman_status_code > 0) {
-            char status[24];
-            snprintf(status, sizeof(status), "HTTP %d", app->spoolman_status_code);
-            canvas_draw_str(canvas, 5, 50, status);
+            snprintf(line, sizeof(line), "HTTP %d", app->spoolman_status_code);
+            canvas_draw_str(canvas, APP_UI_BODY_LEFT, 52, line);
         } else if(!furi_string_empty(app->spoolman_error)) {
-            canvas_draw_str(canvas, 5, 50, furi_string_get_cstr(app->spoolman_error));
+            app_ui_copy_truncated(
+                line, sizeof(line), furi_string_get_cstr(app->spoolman_error), sizeof(line) - 1);
+            canvas_draw_str(canvas, APP_UI_BODY_LEFT, 52, line);
         } else {
-            canvas_draw_str(canvas, 5, 50, "Patch failed");
+            canvas_draw_str(canvas, APP_UI_BODY_LEFT, 52, "Could not save tag");
         }
-        canvas_draw_str(canvas, 5, 63, "OK retry / UPDOWN skip");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "OK Retry  UPDOWN");
         return;
     }
 
     if(app->update_scan_has_result) {
         char scan_hex[(NFC_BLOCK_SIZE * 2) + 1];
+        char short_tag[25];
         app_page_update_format_scan_hex(&app->update_scan_result, scan_hex);
-        canvas_draw_str(canvas, 5, 50, scan_hex);
-        canvas_draw_str(canvas, 5, 63, "OK save / UPDOWN skip");
+        app_ui_copy_truncated(short_tag, sizeof(short_tag), scan_hex, sizeof(short_tag) - 1);
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 52, short_tag);
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "OK Save tag  UPDOWN");
         return;
     }
 
     if(app->update_scan_error) {
-        canvas_draw_str(canvas, 5, 50, "Scan failed");
-        canvas_draw_str(canvas, 5, 63, "OK rescan / UPDOWN skip");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 52, "Scan failed");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "OK Retry  UPDOWN");
         return;
     }
 
-    canvas_draw_str(canvas, 5, 50, "Press OK to scan");
-    canvas_draw_str(canvas, 5, 63, "UP/DOWN: skip");
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 52, "Press OK to scan tag");
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "UPDOWN Skip");
 }
 
 static void app_page_update_draw_detail(Canvas* canvas, const SpoolmanSyncApp* app) {
@@ -71,14 +77,16 @@ static void app_page_update_draw_detail(Canvas* canvas, const SpoolmanSyncApp* a
         app_get_untagged_spool_by_index(app, app->current_untagged_spool_index);
 
     if(!spool) {
-        canvas_draw_str(canvas, 5, 35, "No untagged spool");
-        canvas_draw_str(canvas, 5, 50, "DOWN: recap");
-        canvas_draw_str(canvas, 5, 63, "BACK: menu");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 32, "Nothing left to tag");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 46, "All spools are ready");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "BACK Menu");
         return;
     }
 
     char header[24];
-    char spool_label[64];
+    char header_line[25];
+    char name_line[25];
+    char weight_line[25];
 
     const char* material = furi_string_empty(spool->filament.material) ?
                                "-" :
@@ -92,39 +100,49 @@ static void app_page_update_draw_detail(Canvas* canvas, const SpoolmanSyncApp* a
         "%zu/%zu",
         app->current_untagged_spool_index + 1,
         app->spools_to_update_count);
-    snprintf(spool_label, sizeof(spool_label), "#%d - %.12s", spool->id, material);
+    snprintf(header_line, sizeof(header_line), "#%d %.15s", spool->id, material);
+    app_ui_copy_truncated(name_line, sizeof(name_line), filament_name, 24);
+    if(spool->has_remaining_weight) {
+        snprintf(
+            weight_line,
+            sizeof(weight_line),
+            "Remain: %ug",
+            app_ui_weight_to_grams(spool->remaining_weight));
+    } else {
+        snprintf(weight_line, sizeof(weight_line), "Remain: N/A");
+    }
 
-    canvas_draw_str(canvas, 96, 15, header);
-    canvas_draw_str(canvas, 5, 27, spool_label);
-    canvas_draw_str(canvas, 5, 38, filament_name);
+    canvas_draw_str(canvas, 104, APP_UI_TITLE_Y, header);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 22, header_line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 32, name_line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 42, weight_line);
     app_page_update_draw_detail_status(canvas, app);
 }
 
 void app_page_update_draw(Canvas* canvas, const SpoolmanSyncApp* app) {
     if(app->status == AppStatusLoadingUpdate) {
-        canvas_draw_str(canvas, 10, 15, "Update mode");
-        canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 5, 35, "Loading spools...");
+        app_ui_draw_title(canvas, "Tag existing spools");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 32, "Loading spools...");
         return;
     }
 
     if(app->status == AppStatusUpdateError) {
-        canvas_draw_str(canvas, 10, 15, "Update error");
-        canvas_set_font(canvas, FontSecondary);
+        char line[25];
+        app_ui_draw_title(canvas, "Spool list unavailable");
         if(app->spoolman_status_code > 0) {
-            char status[24];
-            snprintf(status, sizeof(status), "HTTP status: %d", app->spoolman_status_code);
-            canvas_draw_str(canvas, 5, 31, status);
+            snprintf(line, sizeof(line), "HTTP status: %d", app->spoolman_status_code);
+            canvas_draw_str(canvas, APP_UI_BODY_LEFT, 30, line);
         } else {
-            canvas_draw_str(canvas, 5, 31, "No HTTP response");
+            canvas_draw_str(canvas, APP_UI_BODY_LEFT, 30, "No response from server");
         }
-        canvas_draw_str(canvas, 5, 45, furi_string_get_cstr(app->spoolman_error));
-        canvas_draw_str(canvas, 5, 60, "OK retry / BACK menu");
+        app_ui_copy_truncated(
+            line, sizeof(line), furi_string_get_cstr(app->spoolman_error), sizeof(line) - 1);
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 44, line);
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "OK Retry");
         return;
     }
 
-    canvas_draw_str(canvas, 10, 15, "Update mode");
-    canvas_set_font(canvas, FontSecondary);
+    app_ui_draw_title(canvas, "Tag existing spools");
     if(app->update_detail_visible) {
         app_page_update_draw_detail(canvas, app);
     } else {

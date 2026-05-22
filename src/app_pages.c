@@ -20,6 +20,13 @@ void app_pages_draw(Canvas* canvas, SpoolmanSyncApp* app) {
     case AppStatusUpdateError:
         app_page_update_draw(canvas, app);
         break;
+    case AppStatusFindReady:
+    case AppStatusFindReading:
+    case AppStatusFindSearching:
+    case AppStatusFindSuccess:
+    case AppStatusFindError:
+        app_page_find_draw(canvas, app);
+        break;
     case AppStatusScanReady:
     case AppStatusScanReading:
     case AppStatusScanSuccess:
@@ -67,6 +74,13 @@ bool app_pages_handle_input(SpoolmanSyncApp* app, const InputEvent* event) {
     if(app->status == AppStatusLoadingUpdate || app->status == AppStatusUpdateMode ||
        app->status == AppStatusUpdateError) {
         app_page_update_handle_input(app, event);
+        return false;
+    }
+
+    if(app->status == AppStatusFindReady || app->status == AppStatusFindReading ||
+       app->status == AppStatusFindSearching || app->status == AppStatusFindSuccess ||
+       app->status == AppStatusFindError) {
+        app_page_find_handle_input(app, event);
         return false;
     }
 

@@ -20,3 +20,6 @@ You can also change it directly from the app:
 - Press `OK` on `DONE` to test `/api/v1/health` and save only if Spoolman replies correctly
 - Press `BACK` to delete
 - Press `BACK` long to cancel and return to the menu
+
+
+9D3A3924BFE8480C831C007DD795F086

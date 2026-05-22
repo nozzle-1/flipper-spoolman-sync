@@ -31,6 +31,7 @@ typedef struct {
     FuriString* first_used;
     FuriString* last_used;
     SpoolmanFilament filament;
+    bool has_remaining_weight;
     double remaining_weight;
     double initial_weight;
     double spool_weight;
@@ -70,6 +71,12 @@ void spoolman_spool_list_init(SpoolmanSpoolList* list);
 
 void spoolman_spool_list_clear(SpoolmanSpoolList* list);
 
+void spoolman_spool_init(SpoolmanSpool* spool);
+
+void spoolman_spool_clear(SpoolmanSpool* spool);
+
+void spoolman_spool_copy_into(SpoolmanSpool* destination, const SpoolmanSpool* source);
+
 void spoolman_filament_init(SpoolmanFilament* filament);
 
 void spoolman_filament_clear(SpoolmanFilament* filament);
@@ -91,6 +98,12 @@ SpoolmanApiResult
 SpoolmanApiResult
     spoolman_api_get_spools(SpoolmanApi* api, SpoolmanSpoolList* spools, bool allow_archived);
 
+SpoolmanApiResult spoolman_api_get_spools_by_filament(
+    SpoolmanApi* api,
+    int filament_id,
+    SpoolmanSpoolList* spools,
+    bool allow_archived);
+
 void spoolman_api_fill_missing_spool_details(SpoolmanApi* api, SpoolmanSpoolList* spools);
 
 SpoolmanApiResult spoolman_api_find_bambu_filament(
@@ -103,6 +116,8 @@ SpoolmanApiResult spoolman_api_create_spool(
     SpoolmanApi* api,
     int filament_id,
     int* spool_id);
+
+SpoolmanApiResult spoolman_api_delete_spool(SpoolmanApi* api, int spool_id);
 
 SpoolmanApiResult spoolman_api_update_spool_tag(SpoolmanApi* api, int spool_id, const char* tag);
 

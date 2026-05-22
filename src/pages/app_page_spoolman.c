@@ -3,24 +3,27 @@
 #include <stdio.h>
 
 void app_page_spoolman_draw(Canvas* canvas, const SpoolmanSyncApp* app) {
+    char line[25];
+
     if(app->status == AppStatusCheckingSpoolman) {
-        canvas_draw_str(canvas, 10, 15, "Spoolman Sync");
-        canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 10, 35, "Checking Spoolman...");
+        app_ui_draw_title(canvas, "Checking server");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 34, "Connecting to Spoolman");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 46, "Please wait...");
         return;
     }
 
-    canvas_draw_str(canvas, 10, 15, "Spoolman error");
-    canvas_set_font(canvas, FontSecondary);
+    app_ui_draw_title(canvas, "Server unavailable");
     if(app->spoolman_status_code > 0) {
-        char status[24];
-        snprintf(status, sizeof(status), "HTTP status: %d", app->spoolman_status_code);
-        canvas_draw_str(canvas, 5, 31, status);
+        snprintf(line, sizeof(line), "HTTP status: %d", app->spoolman_status_code);
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 30, line);
     } else {
-        canvas_draw_str(canvas, 5, 31, "No HTTP response");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 30, "No response from server");
     }
-    canvas_draw_str(canvas, 5, 45, furi_string_get_cstr(app->spoolman_error));
-    canvas_draw_str(canvas, 5, 60, "OK retry / UP edit URL");
+    app_ui_copy_truncated(
+        line, sizeof(line), furi_string_get_cstr(app->spoolman_error), sizeof(line) - 1);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 44, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 55, "OK Retry");
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "UP Edit server");
 }
 
 bool app_page_spoolman_handle_input(SpoolmanSyncApp* app, const InputEvent* event) {

@@ -48,9 +48,8 @@ static void app_page_scan_copy_ascii(
 static void app_page_scan_draw_header(Canvas* canvas, const SpoolmanSyncApp* app) {
     char page[16];
     snprintf(page, sizeof(page), "%u/%u", (unsigned)(app->read_tag_page + 1), READ_TAG_PAGE_COUNT);
-    canvas_draw_str(canvas, 10, 15, "Scan spool");
-    canvas_draw_str(canvas, 98, 15, page);
-    canvas_set_font(canvas, FontSecondary);
+    app_ui_draw_title(canvas, "Read spool tag");
+    canvas_draw_str(canvas, 103, APP_UI_TITLE_Y, page);
 }
 
 static void app_page_scan_draw_page_0(Canvas* canvas, const NfcScanResult* result) {
@@ -70,17 +69,17 @@ static void app_page_scan_draw_page_0(Canvas* canvas, const NfcScanResult* resul
         sizeof(line),
         "Type:%s",
         detailed_type[0] ? detailed_type : "<unknown>");
-    canvas_draw_str(canvas, 5, 28, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 26, line);
     snprintf(
         line,
         sizeof(line),
         "Color:%s Mat:%s",
         color_hex,
         material_id[0] ? material_id : "<unknown>");
-    canvas_draw_str(canvas, 5, 40, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 38, line);
     snprintf(line, sizeof(line), "Tray UID:%s", tray_uid);
-    canvas_draw_str(canvas, 5, 52, line);
-    canvas_draw_str(canvas, 5, 63, "OK rescan / UPDOWN");
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 50, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "OK Rescan  UPDOWN");
 }
 
 static void app_page_scan_draw_page_1(Canvas* canvas, const NfcScanResult* result) {
@@ -92,21 +91,21 @@ static void app_page_scan_draw_page_1(Canvas* canvas, const NfcScanResult* resul
     app_page_scan_copy_ascii(filament_type, sizeof(filament_type), result->blocks[2], 16);
 
     snprintf(line, sizeof(line), "Filament:%s", filament_type[0] ? filament_type : "<unknown>");
-    canvas_draw_str(canvas, 5, 28, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 26, line);
     snprintf(
         line,
         sizeof(line),
         "Spool:%ug",
         (unsigned)app_page_scan_read_le_u16(&result->blocks[5][4]));
-    canvas_draw_str(canvas, 5, 40, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 38, line);
     snprintf(
         line,
         sizeof(line),
         "Diameter:%.2fmm",
         (double)app_page_scan_read_le_f32(&result->blocks[5][8]));
-    canvas_draw_str(canvas, 5, 52, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 50, line);
     snprintf(line, sizeof(line), "Color 2:%s", second_color_hex);
-    canvas_draw_str(canvas, 5, 63, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, line);
 }
 
 static void app_page_scan_draw_page_2(Canvas* canvas, const NfcScanResult* result) {
@@ -117,27 +116,27 @@ static void app_page_scan_draw_page_2(Canvas* canvas, const NfcScanResult* resul
         sizeof(line),
         "Bed:%uC",
         (unsigned)app_page_scan_read_le_u16(&result->blocks[6][6]));
-    canvas_draw_str(canvas, 5, 28, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 26, line);
     snprintf(
         line,
         sizeof(line),
         "Dry:%uC %uh",
         (unsigned)app_page_scan_read_le_u16(&result->blocks[6][0]),
         (unsigned)app_page_scan_read_le_u16(&result->blocks[6][2]));
-    canvas_draw_str(canvas, 5, 40, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 38, line);
     snprintf(
         line,
         sizeof(line),
         "Hotend:%u-%uC",
         (unsigned)app_page_scan_read_le_u16(&result->blocks[6][10]),
         (unsigned)app_page_scan_read_le_u16(&result->blocks[6][8]));
-    canvas_draw_str(canvas, 5, 52, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 50, line);
     snprintf(
         line,
         sizeof(line),
         "Nozzle:%.2f",
         (double)app_page_scan_read_le_f32(&result->blocks[8][12]));
-    canvas_draw_str(canvas, 5, 63, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, line);
 }
 
 static void app_page_scan_draw_page_3(Canvas* canvas, const NfcScanResult* result) {
@@ -147,30 +146,29 @@ static void app_page_scan_draw_page_3(Canvas* canvas, const NfcScanResult* resul
     app_page_scan_copy_ascii(short_date, sizeof(short_date), result->blocks[13], 16);
 
     snprintf(line, sizeof(line), "Date:%s", short_date[0] ? short_date : "<unknown>");
-    canvas_draw_str(canvas, 5, 28, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 26, line);
     snprintf(
         line,
         sizeof(line),
         "Length:%um",
         (unsigned)app_page_scan_read_le_u16(&result->blocks[14][4]));
-    canvas_draw_str(canvas, 5, 40, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 38, line);
     snprintf(
         line,
         sizeof(line),
         "Width:%u",
         (unsigned)app_page_scan_read_le_u16(&result->blocks[10][4]));
-    canvas_draw_str(canvas, 5, 52, line);
-    canvas_draw_str(canvas, 5, 63, "OK rescan / UPDOWN");
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 50, line);
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "OK Rescan  UPDOWN");
 }
 
 void app_page_scan_draw(Canvas* canvas, const SpoolmanSyncApp* app) {
-    canvas_draw_str(canvas, 10, 15, "Scan spool");
-    canvas_set_font(canvas, FontSecondary);
+    app_ui_draw_title(canvas, "Read spool tag");
 
     if(app->status == AppStatusScanReading) {
-        canvas_draw_str(canvas, 5, 35, "Scanning tag...");
-        canvas_draw_str(canvas, 5, 50, "Reading all blocks");
-        canvas_draw_str(canvas, 5, 63, "BACK: cancel");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 32, "Hold spool near reader");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 46, "Reading tag data...");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "BACK Cancel");
         return;
     }
 
@@ -194,20 +192,22 @@ void app_page_scan_draw(Canvas* canvas, const SpoolmanSyncApp* app) {
     }
 
     if(app->status == AppStatusScanError) {
-        canvas_draw_str(
-            canvas,
-            5,
-            35,
+        char line[25];
+        app_ui_copy_truncated(
+            line,
+            sizeof(line),
             furi_string_empty(app->create_error) ? "Scan failed" :
-                                                   furi_string_get_cstr(app->create_error));
-        canvas_draw_str(canvas, 5, 50, "OK retry");
-        canvas_draw_str(canvas, 5, 63, "BACK: menu");
+                                                   furi_string_get_cstr(app->create_error),
+            sizeof(line) - 1);
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 32, line);
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, 46, "Check spool position");
+        canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "OK Retry");
         return;
     }
 
-    canvas_draw_str(canvas, 5, 35, "Read and decode");
-    canvas_draw_str(canvas, 5, 50, "a Bambu spool tag");
-    canvas_draw_str(canvas, 5, 63, "OK scan / BACK menu");
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 32, "Read and decode");
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, 46, "a Bambu spool tag");
+    canvas_draw_str(canvas, APP_UI_BODY_LEFT, APP_UI_FOOTER_Y, "OK Start scan");
 }
 
 bool app_page_scan_handle_input(SpoolmanSyncApp* app, const InputEvent* event) {

@@ -51,11 +51,8 @@ static void app_trim_ascii_whitespace(char* value) {
     value[trimmed_len] = '\0';
 }
 
-static void app_format_bytes_hex(
-    const uint8_t* bytes,
-    size_t bytes_len,
-    char* output,
-    size_t output_size) {
+static void
+    app_format_bytes_hex(const uint8_t* bytes, size_t bytes_len, char* output, size_t output_size) {
     furi_assert(bytes);
     furi_assert(output);
     furi_assert(output_size >= (bytes_len * 2) + 1);
@@ -68,7 +65,8 @@ static void app_format_bytes_hex(
 static void app_format_block_hex(const NfcScanResult* result, size_t block_index, char* output) {
     furi_assert(result);
     furi_assert(block_index < NFC_BLOCK_COUNT);
-    app_format_bytes_hex(result->blocks[block_index], NFC_BLOCK_SIZE, output, (NFC_BLOCK_SIZE * 2) + 1);
+    app_format_bytes_hex(
+        result->blocks[block_index], NFC_BLOCK_SIZE, output, (NFC_BLOCK_SIZE * 2) + 1);
 }
 
 static bool app_write_spoolman_url_config(const char* base_url) {
@@ -219,7 +217,7 @@ static int32_t app_base_url_test_worker(void* context) {
         furi_mutex_acquire(app->mutex, FuriWaitForever);
         app->status = AppStatusSpoolmanError;
         app_clear_http_status(app);
-        furi_string_set_str(app->spoolman_error, "URL is empty");
+        furi_string_set_str(app->spoolman_error, "Server URL is empty");
         furi_mutex_release(app->mutex);
         view_port_update(app->view_port);
         return 0;
@@ -250,7 +248,7 @@ static int32_t app_base_url_test_worker(void* context) {
             app->spoolman_base_url_input, sizeof(app->spoolman_base_url_input), "%s", candidate);
         app->status = AppStatusModeSelect;
         furi_string_set_str(
-            app->info_message, saved ? "Spoolman URL saved" : "Spoolman OK, save failed");
+            app->info_message, saved ? "Server saved and reachable" : "Server OK, save failed");
         app_clear_http_status(app);
         furi_mutex_release(app->mutex);
 
@@ -380,7 +378,7 @@ void app_open_base_url_editor(SpoolmanSyncApp* app) {
     furi_mutex_release(app->mutex);
 
     uart_text_input_reset(app->base_url_text_input);
-    uart_text_input_set_header_text(app->base_url_text_input, "Spoolman URL");
+    uart_text_input_set_header_text(app->base_url_text_input, "Server URL");
     uart_text_input_set_validator(app->base_url_text_input, NULL, NULL);
     uart_text_input_set_result_callback(
         app->base_url_text_input,
@@ -411,9 +409,28 @@ static void app_reset_create_state(SpoolmanSyncApp* app) {
     app->read_tag_page = 0;
     app->create_filament_id = 0;
     app->create_spool_id = 0;
+    app->create_existing_spool_id = 0;
+    app->create_filament_weight = 0;
+    app->create_existing_spool_weight = 0;
+    app->create_existing_spool_has_remaining_weight = false;
     furi_string_reset(app->create_error);
     furi_string_reset(app->create_filament_name);
     furi_string_reset(app->create_filament_material);
+    furi_string_reset(app->create_existing_spool_name);
+    furi_string_reset(app->create_existing_spool_material);
+}
+
+static void app_reset_find_state(SpoolmanSyncApp* app) {
+    furi_assert(app);
+
+    memset(&app->scan_result, 0, sizeof(app->scan_result));
+    app->find_filament_id = 0;
+    app->find_spool_id = 0;
+    app->find_spool_weight = 0;
+    app->find_spool_has_remaining_weight = false;
+    furi_string_reset(app->find_error);
+    furi_string_reset(app->find_filament_name);
+    furi_string_reset(app->find_filament_material);
 }
 
 static void app_reset_update_scan_state(SpoolmanSyncApp* app) {
@@ -449,7 +466,8 @@ static void app_copy_ascii_fragment(
     }
 }
 
-static bool app_extract_article_number(const NfcScanResult* result, char* output, size_t output_size) {
+static bool
+    app_extract_article_number(const NfcScanResult* result, char* output, size_t output_size) {
     if(!result || !output || output_size < 6) {
         return false;
     }
@@ -482,7 +500,8 @@ static bool app_is_zero_hex_color(const char* color_hex) {
     return color_hex && strcmp(color_hex, "00000000") == 0;
 }
 
-static bool app_extract_color_query(const NfcScanResult* result, char* output, size_t output_size) {
+static bool
+    app_extract_color_query(const NfcScanResult* result, char* output, size_t output_size) {
     if(!result || !output || output_size < 9) {
         return false;
     }
@@ -526,28 +545,93 @@ static const SpoolmanSpool*
     return NULL;
 }
 
-static bool app_create_scan_tag_exists(SpoolmanSyncApp* app, const char* tag_hex, int* existing_spool_id) {
-    if(!app || !app->spoolman_api || !tag_hex) {
+static bool app_get_spool_remaining_weight(const SpoolmanSpool* spool, double* remaining_weight) {
+    if(remaining_weight) {
+        *remaining_weight = 0;
+    }
+
+    if(!spool || !spool->has_remaining_weight) {
         return false;
     }
 
-    bool tag_exists = false;
-    SpoolmanSpoolList spools;
-    spoolman_spool_list_init(&spools);
-
-    SpoolmanApiResult result = spoolman_api_get_spools(app->spoolman_api, &spools, true);
-    if(result == SpoolmanApiResultOk) {
-        const SpoolmanSpool* existing_spool = app_find_spool_by_tag(&spools, tag_hex, 0);
-        if(existing_spool) {
-            tag_exists = true;
-            if(existing_spool_id) {
-                *existing_spool_id = existing_spool->id;
-            }
-        }
+    if(remaining_weight) {
+        *remaining_weight = spool->remaining_weight > 0 ? spool->remaining_weight : 0;
     }
 
-    spoolman_spool_list_clear(&spools);
-    return tag_exists;
+    return true;
+}
+
+static void app_set_existing_create_spool_details(
+    SpoolmanSyncApp* app,
+    const SpoolmanSpool* spool,
+    const SpoolmanFilament* fallback_filament) {
+    if(!app) {
+        return;
+    }
+
+    app->create_existing_spool_id = spool ? spool->id : 0;
+    app->create_existing_spool_weight = 0;
+    app->create_existing_spool_has_remaining_weight = false;
+    furi_string_reset(app->create_existing_spool_name);
+    furi_string_reset(app->create_existing_spool_material);
+
+    if(!spool) {
+        return;
+    }
+
+    const char* spool_name =
+        !furi_string_empty(spool->filament.name) ? furi_string_get_cstr(spool->filament.name) :
+        (fallback_filament && !furi_string_empty(fallback_filament->name) ?
+             furi_string_get_cstr(fallback_filament->name) :
+             NULL);
+    const char* spool_material =
+        !furi_string_empty(spool->filament.material) ?
+            furi_string_get_cstr(spool->filament.material) :
+        (fallback_filament && !furi_string_empty(fallback_filament->material) ?
+             furi_string_get_cstr(fallback_filament->material) :
+             NULL);
+
+    if(spool_name) {
+        furi_string_set_str(app->create_existing_spool_name, spool_name);
+    }
+
+    if(spool_material) {
+        furi_string_set_str(app->create_existing_spool_material, spool_material);
+    }
+
+    app->create_existing_spool_has_remaining_weight =
+        app_get_spool_remaining_weight(spool, &app->create_existing_spool_weight);
+}
+static SpoolmanApiResult app_resolve_filament_from_scan(
+    SpoolmanSyncApp* app,
+    char* tag_hex,
+    size_t tag_hex_size,
+    SpoolmanFilament* filament) {
+    if(!app || !tag_hex || !filament) {
+        return SpoolmanApiResultInvalidArguments;
+    }
+
+    if(!app->spoolman_api) {
+        return SpoolmanApiResultHttpUnavailable;
+    }
+
+    char article_number[8] = "";
+    char color_query[18] = "";
+
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    bool has_article_number =
+        app_extract_article_number(&app->scan_result, article_number, sizeof(article_number));
+    bool has_color_query =
+        app_extract_color_query(&app->scan_result, color_query, sizeof(color_query));
+    app_format_scan_result_hex(&app->scan_result, tag_hex, tag_hex_size);
+    furi_mutex_release(app->mutex);
+
+    if(!has_article_number || !has_color_query) {
+        return SpoolmanApiResultInvalidArguments;
+    }
+
+    return spoolman_api_find_bambu_filament(
+        app->spoolman_api, article_number, color_query, filament);
 }
 
 const SpoolmanSpool*
@@ -590,6 +674,11 @@ static void app_queue_create_process(SpoolmanSyncApp* app) {
     furi_message_queue_put(app->input_queue, &event, 0);
 }
 
+static void app_queue_find_process(SpoolmanSyncApp* app) {
+    AppEvent event = {.type = AppEventTypeFindProcess};
+    furi_message_queue_put(app->input_queue, &event, 0);
+}
+
 static void nfc_service_callback(
     SpoolmanNfcServiceEvent event,
     const NfcScanResult* result,
@@ -597,6 +686,7 @@ static void nfc_service_callback(
     SpoolmanSyncApp* app = context;
     bool play_tag_found_sound = false;
     bool queue_create_process = false;
+    bool queue_find_process = false;
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     if(app->status == AppStatusUpdateMode) {
@@ -614,8 +704,25 @@ static void nfc_service_callback(
             app->update_scan_active = false;
             app->update_scan_error = true;
         }
-    } else if(app->status == AppStatusCreateReading || app->status == AppStatusCreateSearching ||
-              app->status == AppStatusCreateSaving) {
+    } else if(app->status == AppStatusFindReading) {
+        if(event == SpoolmanNfcServiceEventReading) {
+            app->status = AppStatusFindReading;
+        } else if(event == SpoolmanNfcServiceEventSuccess) {
+            app->status = AppStatusFindSearching;
+            app->scan_result = *result;
+            app->find_filament_id = 0;
+            app->find_spool_id = 0;
+            furi_string_reset(app->find_error);
+            furi_string_reset(app->find_filament_name);
+            furi_string_reset(app->find_filament_material);
+            play_tag_found_sound = true;
+            queue_find_process = true;
+        } else if(event == SpoolmanNfcServiceEventError) {
+            FURI_LOG_E(TAG, "Find mode NFC scan failed");
+            app->status = AppStatusFindError;
+            furi_string_set_str(app->find_error, "Scan failed");
+        }
+    } else if(app->status == AppStatusCreateReading) {
         if(event == SpoolmanNfcServiceEventReading) {
             app->status = AppStatusCreateReading;
         } else if(event == SpoolmanNfcServiceEventSuccess) {
@@ -633,15 +740,15 @@ static void nfc_service_callback(
             app->status = AppStatusCreateError;
             furi_string_set_str(app->create_error, "Scan failed");
         }
-    } else if(event == SpoolmanNfcServiceEventReading) {
+    } else if(app->status == AppStatusScanReading && event == SpoolmanNfcServiceEventReading) {
         app->status = AppStatusScanReading;
-    } else if(event == SpoolmanNfcServiceEventSuccess) {
+    } else if(app->status == AppStatusScanReading && event == SpoolmanNfcServiceEventSuccess) {
         app->status = AppStatusScanSuccess;
         app->scan_result = *result;
         app->read_tag_page = 0;
         furi_string_reset(app->create_error);
         play_tag_found_sound = true;
-    } else if(event == SpoolmanNfcServiceEventError) {
+    } else if(app->status == AppStatusScanReading && event == SpoolmanNfcServiceEventError) {
         FURI_LOG_E(TAG, "Read tag NFC scan failed");
         app->status = AppStatusScanError;
         furi_string_set_str(app->create_error, "Scan failed");
@@ -654,6 +761,10 @@ static void nfc_service_callback(
 
     if(queue_create_process) {
         app_queue_create_process(app);
+    }
+
+    if(queue_find_process) {
+        app_queue_find_process(app);
     }
 
     view_port_update(app->view_port);
@@ -671,6 +782,7 @@ void app_start_scan_mode(SpoolmanSyncApp* app) {
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app_reset_create_state(app);
+    app_reset_find_state(app);
     app_clear_http_status(app);
     app->status = AppStatusScanReady;
     furi_mutex_release(app->mutex);
@@ -683,8 +795,35 @@ void app_start_scan_read(SpoolmanSyncApp* app) {
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app_reset_create_state(app);
+    app_reset_find_state(app);
     app_clear_http_status(app);
     app->status = AppStatusScanReading;
+    furi_mutex_release(app->mutex);
+    view_port_update(app->view_port);
+
+    app->nfc_service = nfc_reader_alloc(nfc_service_callback, app);
+    nfc_reader_start(app->nfc_service);
+}
+
+void app_start_find_mode(SpoolmanSyncApp* app) {
+    app_stop_create_mode(app);
+
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    app_reset_find_state(app);
+    app_clear_http_status(app);
+    app->status = AppStatusFindReady;
+    furi_mutex_release(app->mutex);
+
+    view_port_update(app->view_port);
+}
+
+void app_start_find_scan(SpoolmanSyncApp* app) {
+    app_stop_create_mode(app);
+
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    app_reset_find_state(app);
+    app_clear_http_status(app);
+    app->status = AppStatusFindReading;
     furi_mutex_release(app->mutex);
     view_port_update(app->view_port);
 
@@ -697,6 +836,7 @@ void app_start_create_mode(SpoolmanSyncApp* app) {
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app_reset_create_state(app);
+    app_reset_find_state(app);
     app_clear_http_status(app);
     app->status = AppStatusCreateReady;
     furi_mutex_release(app->mutex);
@@ -709,6 +849,7 @@ void app_start_create_scan(SpoolmanSyncApp* app) {
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app_reset_create_state(app);
+    app_reset_find_state(app);
     app_clear_http_status(app);
     app->status = AppStatusCreateReading;
     furi_mutex_release(app->mutex);
@@ -726,49 +867,27 @@ static void app_process_create_scan(SpoolmanSyncApp* app) {
     app_stop_create_mode(app);
     app_ensure_spoolman_api(app);
 
-    char article_number[8] = "";
-    char color_query[18] = "";
     char tag_hex[(NFC_BLOCK_SIZE * 2) + 1] = "";
-    char error_message[48] = "";
-    int existing_spool_id = 0;
     SpoolmanFilament filament;
+    SpoolmanSpoolList spools;
     spoolman_filament_init(&filament);
-
-    furi_mutex_acquire(app->mutex, FuriWaitForever);
-    bool has_article_number =
-        app_extract_article_number(&app->scan_result, article_number, sizeof(article_number));
-    bool has_color_query = app_extract_color_query(&app->scan_result, color_query, sizeof(color_query));
-    app_format_scan_result_hex(&app->scan_result, tag_hex, sizeof(tag_hex));
-    furi_mutex_release(app->mutex);
-
-    if(!has_article_number || !has_color_query) {
-        furi_mutex_acquire(app->mutex, FuriWaitForever);
-        app->status = AppStatusCreateError;
-        app->spoolman_status_code = 0;
-        furi_string_set_str(app->create_error, "Unable to decode spool");
-        furi_mutex_release(app->mutex);
-        app_notify(app, &sequence_error);
-        view_port_update(app->view_port);
-        spoolman_filament_clear(&filament);
-        return;
-    }
-
-    if(app_create_scan_tag_exists(app, tag_hex, &existing_spool_id)) {
-        snprintf(
-            error_message, sizeof(error_message), "Tag already defined on #%d", existing_spool_id);
-        furi_mutex_acquire(app->mutex, FuriWaitForever);
-        app->status = AppStatusCreateError;
-        app->spoolman_status_code = 0;
-        furi_string_set_str(app->create_error, error_message);
-        furi_mutex_release(app->mutex);
-        app_notify(app, &sequence_error);
-        view_port_update(app->view_port);
-        spoolman_filament_clear(&filament);
-        return;
-    }
+    spoolman_spool_list_init(&spools);
 
     SpoolmanApiResult result =
-        spoolman_api_find_bambu_filament(app->spoolman_api, article_number, color_query, &filament);
+        app_resolve_filament_from_scan(app, tag_hex, sizeof(tag_hex), &filament);
+
+    if(result == SpoolmanApiResultInvalidArguments) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        app->status = AppStatusCreateError;
+        app->spoolman_status_code = 0;
+        furi_string_set_str(app->create_error, "Could not read spool data");
+        furi_mutex_release(app->mutex);
+        app_notify(app, &sequence_error);
+        view_port_update(app->view_port);
+        spoolman_spool_list_clear(&spools);
+        spoolman_filament_clear(&filament);
+        return;
+    }
 
     if(result != SpoolmanApiResultOk) {
         furi_mutex_acquire(app->mutex, FuriWaitForever);
@@ -777,8 +896,7 @@ static void app_process_create_scan(SpoolmanSyncApp* app) {
             app->spoolman_api ? spoolman_api_get_status_code(app->spoolman_api) : 0;
         if(app->spoolman_api &&
            strcmp(spoolman_api_get_last_error(app->spoolman_api), "Filament not found") == 0) {
-            furi_string_set_str(
-                app->create_error, "Filament absent: create it in Spoolman");
+            furi_string_set_str(app->create_error, "Filament missing in Spoolman");
         } else if(app->spoolman_api) {
             furi_string_set(app->create_error, spoolman_api_get_last_error(app->spoolman_api));
         } else {
@@ -787,6 +905,43 @@ static void app_process_create_scan(SpoolmanSyncApp* app) {
         furi_mutex_release(app->mutex);
         app_notify(app, &sequence_error);
         view_port_update(app->view_port);
+        spoolman_spool_list_clear(&spools);
+        spoolman_filament_clear(&filament);
+        return;
+    }
+
+    result = spoolman_api_get_spools_by_filament(app->spoolman_api, filament.id, &spools, true);
+    if(result != SpoolmanApiResultOk) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        app->status = AppStatusCreateError;
+        app->spoolman_status_code =
+            app->spoolman_api ? spoolman_api_get_status_code(app->spoolman_api) : 0;
+        if(app->spoolman_api) {
+            furi_string_set(app->create_error, spoolman_api_get_last_error(app->spoolman_api));
+        } else {
+            furi_string_set_str(app->create_error, "HTTP unavailable");
+        }
+        furi_mutex_release(app->mutex);
+        app_notify(app, &sequence_error);
+        view_port_update(app->view_port);
+        spoolman_spool_list_clear(&spools);
+        spoolman_filament_clear(&filament);
+        return;
+    }
+
+    spoolman_api_fill_missing_spool_details(app->spoolman_api, &spools);
+
+    const SpoolmanSpool* existing_spool = app_find_spool_by_tag(&spools, tag_hex, 0);
+    if(existing_spool) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        app->status = AppStatusCreateError;
+        app->spoolman_status_code = 0;
+        app_set_existing_create_spool_details(app, existing_spool, &filament);
+        furi_string_printf(app->create_error, "Tag already defined on #%d", existing_spool->id);
+        furi_mutex_release(app->mutex);
+        app_notify(app, &sequence_error);
+        view_port_update(app->view_port);
+        spoolman_spool_list_clear(&spools);
         spoolman_filament_clear(&filament);
         return;
     }
@@ -794,10 +949,129 @@ static void app_process_create_scan(SpoolmanSyncApp* app) {
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->status = AppStatusCreateConfirm;
     app->create_filament_id = filament.id;
+    app->create_filament_weight = filament.weight;
     furi_string_set(app->create_filament_name, filament.name);
     furi_string_set(app->create_filament_material, filament.material);
     furi_mutex_release(app->mutex);
     view_port_update(app->view_port);
+    spoolman_spool_list_clear(&spools);
+    spoolman_filament_clear(&filament);
+}
+
+static void app_process_find_scan(SpoolmanSyncApp* app) {
+    if(!app) {
+        return;
+    }
+
+    app_stop_create_mode(app);
+    app_ensure_spoolman_api(app);
+
+    char tag_hex[(NFC_BLOCK_SIZE * 2) + 1] = "";
+    SpoolmanFilament filament;
+    SpoolmanSpoolList spools;
+    spoolman_filament_init(&filament);
+    spoolman_spool_list_init(&spools);
+
+    SpoolmanApiResult result =
+        app_resolve_filament_from_scan(app, tag_hex, sizeof(tag_hex), &filament);
+
+    if(result == SpoolmanApiResultInvalidArguments) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        app->status = AppStatusFindError;
+        app->spoolman_status_code = 0;
+        furi_string_set_str(app->find_error, "Could not read spool data");
+        furi_mutex_release(app->mutex);
+        app_notify(app, &sequence_error);
+        view_port_update(app->view_port);
+        spoolman_spool_list_clear(&spools);
+        spoolman_filament_clear(&filament);
+        return;
+    }
+
+    if(result != SpoolmanApiResultOk) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        app->status = AppStatusFindError;
+        app->spoolman_status_code =
+            app->spoolman_api ? spoolman_api_get_status_code(app->spoolman_api) : 0;
+        if(app->spoolman_api &&
+           strcmp(spoolman_api_get_last_error(app->spoolman_api), "Filament not found") == 0) {
+            furi_string_set_str(app->find_error, "Filament missing in Spoolman");
+        } else if(app->spoolman_api) {
+            furi_string_set(app->find_error, spoolman_api_get_last_error(app->spoolman_api));
+        } else {
+            furi_string_set_str(app->find_error, "HTTP unavailable");
+        }
+        furi_mutex_release(app->mutex);
+        app_notify(app, &sequence_error);
+        view_port_update(app->view_port);
+        spoolman_spool_list_clear(&spools);
+        spoolman_filament_clear(&filament);
+        return;
+    }
+
+    result = spoolman_api_get_spools_by_filament(app->spoolman_api, filament.id, &spools, true);
+    if(result != SpoolmanApiResultOk) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        app->status = AppStatusFindError;
+        app->spoolman_status_code =
+            app->spoolman_api ? spoolman_api_get_status_code(app->spoolman_api) : 0;
+        if(app->spoolman_api) {
+            furi_string_set(app->find_error, spoolman_api_get_last_error(app->spoolman_api));
+        } else {
+            furi_string_set_str(app->find_error, "HTTP unavailable");
+        }
+        furi_mutex_release(app->mutex);
+        app_notify(app, &sequence_error);
+        view_port_update(app->view_port);
+        spoolman_spool_list_clear(&spools);
+        spoolman_filament_clear(&filament);
+        return;
+    }
+
+    spoolman_api_fill_missing_spool_details(app->spoolman_api, &spools);
+
+    const SpoolmanSpool* found_spool = app_find_spool_by_tag(&spools, tag_hex, 0);
+    if(!found_spool) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        app->status = AppStatusFindError;
+        app->spoolman_status_code = 0;
+        app->find_filament_id = filament.id;
+        app->find_spool_weight = 0;
+        app->find_spool_has_remaining_weight = false;
+        furi_string_set(app->find_filament_name, filament.name);
+        furi_string_set(app->find_filament_material, filament.material);
+        furi_string_set_str(app->find_error, "No spool matches this tag");
+        furi_mutex_release(app->mutex);
+        app_notify(app, &sequence_error);
+        view_port_update(app->view_port);
+        spoolman_spool_list_clear(&spools);
+        spoolman_filament_clear(&filament);
+        return;
+    }
+
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    app->status = AppStatusFindSuccess;
+    app->spoolman_status_code = 0;
+    app->find_filament_id = filament.id;
+    app->find_spool_id = found_spool->id;
+    app->find_spool_has_remaining_weight =
+        app_get_spool_remaining_weight(found_spool, &app->find_spool_weight);
+    furi_string_reset(app->find_error);
+    if(!furi_string_empty(found_spool->filament.name)) {
+        furi_string_set(app->find_filament_name, found_spool->filament.name);
+    } else {
+        furi_string_set(app->find_filament_name, filament.name);
+    }
+    if(!furi_string_empty(found_spool->filament.material)) {
+        furi_string_set(app->find_filament_material, found_spool->filament.material);
+    } else {
+        furi_string_set(app->find_filament_material, filament.material);
+    }
+    furi_mutex_release(app->mutex);
+
+    app_notify(app, &sequence_success);
+    view_port_update(app->view_port);
+    spoolman_spool_list_clear(&spools);
     spoolman_filament_clear(&filament);
 }
 
@@ -808,10 +1082,16 @@ void app_confirm_create_spool(SpoolmanSyncApp* app) {
 
     int filament_id = 0;
     int spool_id = 0;
+    int rolled_back_spool_id = 0;
     char tag_hex[(NFC_BLOCK_SIZE * 2) + 1] = "";
+    char duplicate_tag_error[32] = "";
+    SpoolmanSpoolList spools;
+
+    spoolman_spool_list_init(&spools);
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     if(app->status != AppStatusCreateConfirm || app->create_filament_id <= 0) {
+        spoolman_spool_list_clear(&spools);
         furi_mutex_release(app->mutex);
         return;
     }
@@ -820,18 +1100,55 @@ void app_confirm_create_spool(SpoolmanSyncApp* app) {
     app_format_scan_result_hex(&app->scan_result, tag_hex, sizeof(tag_hex));
     app->status = AppStatusCreateSaving;
     app->create_spool_id = 0;
+    app->create_existing_spool_id = 0;
+    app->create_existing_spool_weight = 0;
+    app->create_existing_spool_has_remaining_weight = false;
     furi_string_reset(app->create_error);
+    furi_string_reset(app->create_existing_spool_name);
+    furi_string_reset(app->create_existing_spool_material);
     furi_mutex_release(app->mutex);
     view_port_update(app->view_port);
 
-    SpoolmanApiResult result = spoolman_api_create_spool(app->spoolman_api, filament_id, &spool_id);
+    SpoolmanApiResult result =
+        spoolman_api_get_spools_by_filament(app->spoolman_api, filament_id, &spools, true);
     if(result == SpoolmanApiResultOk) {
-        result = spoolman_api_update_spool_tag(app->spoolman_api, spool_id, tag_hex);
+        spoolman_api_fill_missing_spool_details(app->spoolman_api, &spools);
+    }
+    const SpoolmanSpool* existing_spool =
+        result == SpoolmanApiResultOk ? app_find_spool_by_tag(&spools, tag_hex, 0) : NULL;
+
+    if(existing_spool) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        app_set_existing_create_spool_details(app, existing_spool, NULL);
+        furi_mutex_release(app->mutex);
+
+        snprintf(
+            duplicate_tag_error,
+            sizeof(duplicate_tag_error),
+            "Tag already defined on #%d",
+            existing_spool->id);
+        result = SpoolmanApiResultRequestFailed;
+    } else if(result == SpoolmanApiResultOk) {
+        result = spoolman_api_create_spool(app->spoolman_api, filament_id, &spool_id);
+        if(result == SpoolmanApiResultOk) {
+            result = spoolman_api_update_spool_tag(app->spoolman_api, spool_id, tag_hex);
+            if(result != SpoolmanApiResultOk) {
+                if(spoolman_api_delete_spool(app->spoolman_api, spool_id) == SpoolmanApiResultOk) {
+                    rolled_back_spool_id = spool_id;
+                    spool_id = 0;
+                } else {
+                    FURI_LOG_W(
+                        TAG, "Failed to roll back spool #%d after tag update error", spool_id);
+                }
+            }
+        }
     }
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->spoolman_status_code =
-        app->spoolman_api ? spoolman_api_get_status_code(app->spoolman_api) : 0;
+        duplicate_tag_error[0] != '\0' ?
+            0 :
+            (app->spoolman_api ? spoolman_api_get_status_code(app->spoolman_api) : 0);
     if(result == SpoolmanApiResultOk) {
         app->status = AppStatusCreateSuccess;
         app->create_spool_id = spool_id;
@@ -839,16 +1156,23 @@ void app_confirm_create_spool(SpoolmanSyncApp* app) {
     } else {
         app->status = AppStatusCreateError;
         app->create_spool_id = spool_id;
-        if(app->spoolman_api) {
+        if(duplicate_tag_error[0] != '\0') {
+            furi_string_set_str(app->create_error, duplicate_tag_error);
+        } else if(app->spoolman_api) {
             furi_string_set(app->create_error, spoolman_api_get_last_error(app->spoolman_api));
         } else {
             furi_string_set_str(app->create_error, "HTTP unavailable");
+        }
+        if(rolled_back_spool_id > 0) {
+            FURI_LOG_I(
+                TAG, "Rolled back spool #%d after create/tag failure", rolled_back_spool_id);
         }
     }
     furi_mutex_release(app->mutex);
 
     app_notify(app, result == SpoolmanApiResultOk ? &sequence_success : &sequence_error);
     view_port_update(app->view_port);
+    spoolman_spool_list_clear(&spools);
 }
 
 void app_check_spoolman_health(SpoolmanSyncApp* app) {
@@ -1044,6 +1368,7 @@ void app_start_update_mode(SpoolmanSyncApp* app) {
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->status = AppStatusLoadingUpdate;
+    app_reset_find_state(app);
     app->spools_to_update_count = 0;
     app->total_spools_count = 0;
     app->current_untagged_spool_index = 0;
@@ -1061,7 +1386,7 @@ void app_start_update_mode(SpoolmanSyncApp* app) {
     SpoolmanSpoolList spools;
     spoolman_spool_list_init(&spools);
     if(app->spoolman_api) {
-        result = spoolman_api_get_spools(app->spoolman_api, &spools, true);
+        result = spoolman_api_get_spools(app->spoolman_api, &spools, false);
     }
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
@@ -1102,6 +1427,7 @@ void app_return_to_menu(SpoolmanSyncApp* app) {
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->status = AppStatusModeSelect;
+    app_reset_find_state(app);
     app_reset_update_scan_state(app);
     furi_mutex_release(app->mutex);
 
@@ -1113,7 +1439,7 @@ int32_t entrypoint(void* p) {
     SpoolmanSyncApp* app = malloc(sizeof(SpoolmanSyncApp));
     memset(app, 0, sizeof(SpoolmanSyncApp));
     app->status = AppStatusCheckingSpoolman;
-    app->selected_mode = AppModeUpdate;
+    app->selected_mode = AppModeCreate;
     spoolman_spool_list_init(&app->spools);
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->input_queue = furi_message_queue_alloc(8, sizeof(AppEvent));
@@ -1123,6 +1449,11 @@ int32_t entrypoint(void* p) {
     app->create_error = furi_string_alloc();
     app->create_filament_name = furi_string_alloc();
     app->create_filament_material = furi_string_alloc();
+    app->create_existing_spool_name = furi_string_alloc();
+    app->create_existing_spool_material = furi_string_alloc();
+    app->find_error = furi_string_alloc();
+    app->find_filament_name = furi_string_alloc();
+    app->find_filament_material = furi_string_alloc();
 
     app->view_port = view_port_alloc();
     view_port_draw_callback_set(app->view_port, draw_callback, app);
@@ -1155,6 +1486,8 @@ int32_t entrypoint(void* p) {
             app_base_url_handle_back(app);
         } else if(event.type == AppEventTypeCreateProcess) {
             app_process_create_scan(app);
+        } else if(event.type == AppEventTypeFindProcess) {
+            app_process_find_scan(app);
         }
     }
 
@@ -1179,6 +1512,11 @@ int32_t entrypoint(void* p) {
     furi_string_free(app->create_error);
     furi_string_free(app->create_filament_name);
     furi_string_free(app->create_filament_material);
+    furi_string_free(app->create_existing_spool_name);
+    furi_string_free(app->create_existing_spool_material);
+    furi_string_free(app->find_error);
+    furi_string_free(app->find_filament_name);
+    furi_string_free(app->find_filament_material);
     furi_mutex_free(app->mutex);
     free(app);
 
