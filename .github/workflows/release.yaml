@@ -1,16 +1,24 @@
 name: Release
 
 on:
-  push:
-    tags: [ 'v*' ]
+  pull_request:
+    types: [ closed ]
+    branches: [ main ]
 
 jobs:
   build-and-release:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+
+      - name: Create tag
+        uses: mathieudutour/github-tag-action@v6.1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build FAP
         uses: flipperdevices/flipperzero-ufbt-action@v0.1
