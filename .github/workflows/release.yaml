@@ -1,0 +1,26 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Build FAP
+        uses: flipperdevices/flipperzero-ufbt-action@v0.1
+        id: build
+        with: 
+          app-dir: "./src"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ steps.build.outputs.fap-artifacts }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,27 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Build FAP
+        uses: flipperdevices/flipperzero-ufbt-action@v0.1
+        id: build
+        with: 
+          app-dir: "./src"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: spoolman_sync.fap
+          path: ${{ steps.build.outputs.fap-artifacts }}
