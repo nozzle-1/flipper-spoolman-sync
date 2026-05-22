@@ -17,6 +17,8 @@ jobs:
       - name: Build FAP
         uses: flipperdevices/flipperzero-ufbt-action@v0.1
         id: build
+        with: 
+          app-dir: "./src"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
