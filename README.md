@@ -6,6 +6,8 @@ This project is a Flipper Zero app built for a simple use case: take a Bambu Lab
 
 It is especially useful if you already manage your filament stock in Spoolman and want a faster way to register physical spools as they arrive on your shelf.
 
+The repository also includes helper scripts in [tools/README.md](tools/README.md) to import Bambu Lab filament definitions into Spoolman and store Bambu internal filament codes as `article_number` for direct lookup from the Flipper app.
+
 ## Why this exists
 
 Bambu Lab spools already contain useful data in their RFID tags. This app reads that data from a Flipper Zero, extracts the information needed to identify the filament, and uses the Spoolman API to:
